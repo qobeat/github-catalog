@@ -1,0 +1,527 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/qobeat/my-unix-scripts/docs/github-catalog.schema.json",
+  "title": "GitHub Catalog Record Schema",
+  "description": "Schema for append-only GitHub catalog JSONL records and materialized catalog exports.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/run_record"
+    },
+    {
+      "$ref": "#/$defs/repo_snapshot_record"
+    },
+    {
+      "$ref": "#/$defs/commit_record"
+    },
+    {
+      "$ref": "#/$defs/catalog_export"
+    }
+  ],
+  "$defs": {
+    "iso_datetime": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$"
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "private",
+        "public",
+        "all"
+      ]
+    },
+    "extracted_field": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "source_file",
+        "source_heading"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "source_file": {
+          "type": "string"
+        },
+        "source_heading": {
+          "type": "string"
+        },
+        "resolved_from": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "filter": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "visibility"
+      ],
+      "properties": {
+        "visibility": {
+          "$ref": "#/$defs/visibility"
+        },
+        "non_empty": {
+          "type": "boolean"
+        },
+        "repos_glob": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line_counts": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "top_level_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "type",
+        "role"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "file",
+            "dir"
+          ]
+        },
+        "role": {
+          "type": "string"
+        },
+        "children": {
+          "type": "string"
+        }
+      }
+    },
+    "repo": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "slug",
+        "url",
+        "default_branch",
+        "archetype",
+        "bootstrap",
+        "files_total",
+        "text_files",
+        "binary_files",
+        "top_level",
+        "execution_flows",
+        "errors"
+      ],
+      "properties": {
+        "slug": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string"
+        },
+        "github_description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pushed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default_branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "head_commit_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "head_commit_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "full_name": {
+          "$ref": "#/$defs/extracted_field"
+        },
+        "description": {
+          "$ref": "#/$defs/extracted_field"
+        },
+        "goal": {
+          "$ref": "#/$defs/extracted_field"
+        },
+        "objectives": {
+          "$ref": "#/$defs/extracted_field"
+        },
+        "requirements": {
+          "$ref": "#/$defs/extracted_field"
+        },
+        "archetype": {
+          "type": "string",
+          "enum": [
+            "profile",
+            "runtime",
+            "app",
+            "research",
+            "prompt",
+            "library",
+            "tool",
+            "content",
+            "other"
+          ]
+        },
+        "archetype_notes": {
+          "type": "string"
+        },
+        "bootstrap": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "no",
+            "partial",
+            "unknown"
+          ]
+        },
+        "bootstrap_notes": {
+          "type": "string"
+        },
+        "files_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "binary_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text_lines": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "top_level": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/top_level_entry"
+          }
+        },
+        "execution_flows": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "flow_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "key_files_present": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "run_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "report_id",
+        "generated_at",
+        "owner",
+        "filter",
+        "repo_count",
+        "repos_collected",
+        "repos_skipped"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "record_type": {
+          "const": "run"
+        },
+        "report_id": {
+          "$ref": "#/$defs/iso_datetime"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/iso_datetime"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "filter": {
+          "$ref": "#/$defs/filter"
+        },
+        "repo_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repos_collected": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repos_skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "repo_snapshot_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "report_id",
+        "generated_at",
+        "owner",
+        "filter",
+        "repo_slug",
+        "repo_url",
+        "default_branch",
+        "head_commit_sha",
+        "collection_skipped",
+        "repo"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+$"
+        },
+        "record_type": {
+          "const": "repo_snapshot"
+        },
+        "report_id": {
+          "$ref": "#/$defs/iso_datetime"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/iso_datetime"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "filter": {
+          "$ref": "#/$defs/filter"
+        },
+        "repo_slug": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repo_url": {
+          "type": "string"
+        },
+        "default_branch": {
+          "type": "string"
+        },
+        "head_commit_sha": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "head_commit_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "collection_skipped": {
+          "type": "boolean"
+        },
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "commit_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "record_type",
+        "report_id",
+        "generated_at",
+        "owner",
+        "repo_slug",
+        "repo_url",
+        "default_branch",
+        "sha",
+        "short_sha",
+        "committed_at",
+        "message"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "record_type": {
+          "const": "commit"
+        },
+        "report_id": {
+          "$ref": "#/$defs/iso_datetime"
+        },
+        "generated_at": {
+          "$ref": "#/$defs/iso_datetime"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "repo_slug": {
+          "type": "string"
+        },
+        "repo_url": {
+          "type": "string"
+        },
+        "default_branch": {
+          "type": "string"
+        },
+        "sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "short_sha": {
+          "type": "string"
+        },
+        "committed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author_login": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "catalog_export": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schema_version",
+        "generated_at",
+        "owner",
+        "filter",
+        "repo_count",
+        "repos"
+      ],
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "report_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "filter": {
+          "$ref": "#/$defs/filter"
+        },
+        "repo_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repo"
+          }
+        }
+      }
+    }
+  }
+}
