@@ -29,7 +29,13 @@ EOF
 }
 
 log_error() { printf 'ERROR: %s\n' "$*" >&2; }
-fail() { log_error "$*"; exit 1; }
+fail() { log_error "$*"; exit "$GC_EXIT_PRECOND"; }
+fail_usage() { log_error "$*"; exit "$GC_EXIT_USAGE"; }
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=scripts/github-catalog-lib.sh
+source "$SCRIPT_DIR/github-catalog-lib.sh"
 
 normalize_owner() {
   local o="$1"
@@ -97,7 +103,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$TARGET" ]] || { usage; exit 1; }
+[[ -n "$TARGET" ]] || { usage; exit "$GC_EXIT_USAGE"; }
 [[ "$VISIBILITY" =~ ^(private|public|all)$ ]] || fail "--type must be private, public, or all"
 
 OWNER=""

@@ -1,24 +1,30 @@
 #!/usr/bin/env bash
-# scripts/github-catalog-report.sh - Generate markdown reports using pure jq
+# scripts/github-catalog-report.sh - Generate markdown or JSON reports using pure jq
 set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=scripts/github-catalog-lib.sh
+source "$SCRIPT_DIR/github-catalog-lib.sh"
 
 usage() {
   cat <<'EOF'
-github-catalog-report.sh - Generate Markdown report from catalog JSONL
+github-catalog-report.sh - Generate report from catalog JSONL
 
 Usage:
   scripts/github-catalog-report.sh --owner NAME [options]
 
 Options:
   --owner NAME          Owner name (required; used in report title and default paths)
+  --format md|json      Output format (default: md)
   --data-dir DIR        JSONL directory (default: data/<owner>)
   --catalog FILE        Catalog JSONL path (overrides --data-dir)
   --commits FILE        Commits JSONL path (overrides --data-dir)
-  --output FILE         Output markdown path (default: reports/<owner>/report-<timestamp>.md + latest.md symlink)
+  --output FILE         Output path (md: default reports/<owner>/report-<ts>.md; json: stdout)
+  -h, --help            Show this help
 EOF
 }
 
-# Fingerprint report body, stripping lines that change per generation or sync run.
 report_content_fingerprint() {
   sed -E \
     -e '/^_Generated: .*_$/d' \
@@ -61,29 +67,46 @@ EOF
   fi
 }
 
+build_report_json() {
+  local owner="$1" date="$2" catalog="$3" commits="$4"
+  {
+    cat "$catalog"
+    if [[ -f "$commits" ]] && [[ -s "$commits" ]]; then
+      cat "$commits"
+    fi
+  } | jq -rn \
+    --arg owner "$owner" \
+    --arg date "$date" \
+    -f "$SCRIPT_DIR/report-data.jq"
+}
+
+render_report_md() {
+  jq -r -f "$SCRIPT_DIR/report-render-md.jq"
+}
+
 OWNER=""
 DATA_DIR=""
 CATALOG_JSONL=""
 COMMITS_JSONL=""
 OUT_MD=""
+FORMAT="md"
 UPDATE_LATEST_SYMLINK=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --owner)   OWNER="${2:?}"; shift 2 ;;
+    --format)  FORMAT="${2:?}"; shift 2 ;;
     --data-dir) DATA_DIR="${2:?}"; shift 2 ;;
     --catalog) CATALOG_JSONL="${2:?}"; shift 2 ;;
     --commits) COMMITS_JSONL="${2:?}"; shift 2 ;;
     --output)  OUT_MD="${2:?}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
-    *) echo "ERROR: unknown option $1" >&2; exit 1 ;;
+    *) gc_exit_usage "unknown option $1" ;;
   esac
 done
 
-[[ -n "$OWNER" ]] || { echo "ERROR: --owner is required" >&2; exit 1; }
-
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+[[ -n "$OWNER" ]] || gc_exit_usage "--owner is required"
+[[ "$FORMAT" == "md" || "$FORMAT" == "json" ]] || gc_exit_usage "--format must be md or json"
 
 if [[ -z "$DATA_DIR" && -z "$CATALOG_JSONL" ]]; then
   DATA_DIR="$REPO_ROOT/data/$OWNER"
@@ -97,6 +120,24 @@ if [[ -z "$COMMITS_JSONL" ]]; then
   COMMITS_JSONL="$DATA_DIR/git-projects-commits.jsonl"
 fi
 
+if [[ ! -f "$CATALOG_JSONL" ]]; then
+  catalog_missing_error "$OWNER" "$CATALOG_JSONL" "$DATA_DIR"
+  gc_exit_precond "catalog not found"
+fi
+
+REPORT_DATE="$(date -u +"%Y-%m-%d %H:%M UTC")"
+REPORT_JSON="$(build_report_json "$OWNER" "$REPORT_DATE" "$CATALOG_JSONL" "$COMMITS_JSONL")"
+
+if [[ "$FORMAT" == "json" ]]; then
+  if [[ -n "$OUT_MD" ]]; then
+    printf '%s\n' "$REPORT_JSON" > "$OUT_MD"
+    echo "Report JSON written: $OUT_MD"
+  else
+    printf '%s\n' "$REPORT_JSON"
+  fi
+  exit 0
+fi
+
 if [[ -z "$OUT_MD" ]]; then
   REPORT_TS="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
   REPORT_DIR="$REPO_ROOT/reports/$OWNER"
@@ -105,13 +146,7 @@ if [[ -z "$OUT_MD" ]]; then
   UPDATE_LATEST_SYMLINK=1
 fi
 
-if [[ ! -f "$CATALOG_JSONL" ]]; then
-  catalog_missing_error "$OWNER" "$CATALOG_JSONL" "$DATA_DIR"
-  exit 1
-fi
-
 mkdir -p "$(dirname -- "$OUT_MD")"
-REPORT_DATE="$(date -u +"%Y-%m-%d %H:%M UTC")"
 
 WRITE_TARGET="$OUT_MD"
 TEMP_REPORT=""
@@ -120,151 +155,7 @@ if (( UPDATE_LATEST_SYMLINK == 1 )); then
   WRITE_TARGET="$TEMP_REPORT"
 fi
 
-# --- Section A + B: overview and repository summary ---
-jq -rn \
-  --arg owner "$OWNER" \
-  --arg date "$REPORT_DATE" \
-  '
-  def repo_status: .status // "active";
-  def deleted_suffix: if repo_status == "deleted" then " [deleted]" else "" end;
-  def skipped_suffix: if .collection_skipped then "*" else "" end;
-  [inputs] as $all |
-  ($all
-    | map(select(.record_type == "repo_snapshot"))
-    | group_by(.repo_slug)
-    | map(sort_by(.generated_at) | last)
-    | sort_by(.repo_slug)) as $repos |
-  ($all
-    | map(select(.record_type == "run"))
-    | sort_by(.generated_at)
-    | last) as $run |
-  (
-    "# GitHub Catalog Report: \($owner)\n" +
-    "_Generated: \($date)_\n\n" +
-    "## Catalog Overview\n\n" +
-    "- **Repositories cataloged:** \($repos | length)\n" +
-    "- **Repositories deleted:** \($repos | map(select(repo_status == "deleted")) | length)\n" +
-    (if $run != null then
-      "- **Last sync run:** \($run.report_id) — glob `\($run.repos_glob)`, " +
-      "\($run.repos_completed)/\($run.repos_total) completed, \($run.failures) failures, parallel \($run.parallel)\n"
-    else "" end) +
-    "- **Skipped on last snapshot:** \($repos | map(select(.collection_skipped)) | length) repos (HEAD unchanged)\n\n" +
-    "## Repository Summary\n\n" +
-    "| Repository | Branch | SHA | Last Commit | Key Files | Goal (excerpt) |\n" +
-    "|---|---|---|---|---|---|\n"
-  ),
-  (
-    $repos[] |
-    (if (.repo_url | startswith("https://")) then
-      "[\(.repo_slug)\(skipped_suffix)\(deleted_suffix)](\(.repo_url))"
-    else
-      "**\(.repo_slug)\(skipped_suffix)\(deleted_suffix)**"
-    end) as $repo_cell |
-    "| \($repo_cell) | \(.default_branch // "—") | `\(.head_commit_sha[0:7] // "-------")` | " +
-    "\(.head_commit_at // "Unknown") | \(.key_files_present | length) | " +
-    "\((.goal.text // "Not documented") | split("\n")[0] | .[0:80]) |\n"
-  )
-' "$CATALOG_JSONL" > "$WRITE_TARGET"
-
-# --- Sections C–E: commit activity, detailed semantics, collection errors ---
-{
-  echo ""
-  if [[ -f "$COMMITS_JSONL" ]] && [[ -s "$COMMITS_JSONL" ]]; then
-    status_map=$(jq -rn '
-      [inputs | select(.record_type == "repo_snapshot")]
-      | group_by(.repo_slug)
-      | map({
-          key: .[0].repo_slug,
-          value: (sort_by(.generated_at) | last | .status // "active")
-        })
-      | from_entries
-    ' "$CATALOG_JSONL")
-    jq -rn \
-      --argjson statuses "$status_map" \
-      '
-      "## Commit Activity\n\n" +
-      "| Repository | Commits recorded | Latest commit |\n" +
-      "|---|---|---|\n",
-      (
-        [inputs | select(.record_type == "commit")]
-        | group_by(.repo_slug)
-        | map({
-            repo: .[0].repo_slug,
-            count: length,
-            latest: (sort_by(.committed_at) | last | .committed_at)
-          })
-        | sort_by(.repo)
-        | .[]
-        | (if ($statuses[.repo] // "active") == "deleted" then "\(.repo) [deleted]" else .repo end) as $label |
-        "| \($label) | \(.count) | \(.latest // "Unknown") |\n"
-      )
-    ' "$COMMITS_JSONL"
-  else
-    echo "_Commit history not available — run sync to populate \`git-projects-commits.jsonl\`._"
-  fi
-
-  echo ""
-  echo "## Detailed Semantics"
-  echo ""
-  jq -rn '
-    def repo_status: .status // "active";
-    def deleted_suffix: if repo_status == "deleted" then " [deleted]" else "" end;
-    [inputs
-      | select(.record_type == "repo_snapshot")
-    ]
-    | group_by(.repo_slug)
-    | map(sort_by(.generated_at) | last)
-    | sort_by(.repo_slug)
-    | map(select(.goal != null or .objectives != null or .flows != null or .requirements != null))
-    | if length == 0 then
-      "_No documented goal, objectives, flows, or requirements found._\n"
-    else
-      .[] |
-      (if (.repo_url | startswith("https://")) then
-        "### [\(.repo_slug)\(deleted_suffix)](\(.repo_url))\n\n"
-      else
-        "### \(.repo_slug)\(deleted_suffix)\n\n"
-      end) +
-      "- **Branch:** \(.default_branch // "—")\n" +
-      (if repo_status == "deleted" then "- **Status:** deleted\n" else "" end) +
-      (if .created_at then "- **Created:** \(.created_at)\n" else "" end) +
-      (if (.key_files_present | length) > 0 then
-        "- **Key files:** \(.key_files_present | join(", "))\n"
-      else "" end) +
-      (if (.repo_url != null and (.repo_url | startswith("https://") | not)) then
-        "- **URL:** \(.repo_url)\n"
-      else "" end) +
-      "\n" +
-      (if .goal != null then
-        "**Goal:**\n_from `\(.goal.source_file)` § `\(.goal.source_heading)`_\n\n> \(.goal.text)\n\n"
-      else "" end) +
-      (if .objectives != null then
-        "**Objectives:**\n_from `\(.objectives.source_file)` § `\(.objectives.source_heading)`_\n\n> \(.objectives.text)\n\n"
-      else "" end) +
-      (if .flows != null then
-        "**Flows:**\n_from `\(.flows.source_file)` § `\(.flows.source_heading)`_\n\n> \(.flows.text)\n\n"
-      else "" end) +
-      (if .requirements != null then
-        "**Requirements:**\n_from `\(.requirements.source_file)` § `\(.requirements.source_heading)`_\n\n> \(.requirements.text)\n\n"
-      else "" end)
-    end
-  ' "$CATALOG_JSONL"
-
-  jq -rn '
-    def repo_status: .status // "active";
-    [inputs | select(.record_type == "repo_snapshot")]
-    | group_by(.repo_slug)
-    | map(sort_by(.generated_at) | last)
-    | map(select(.errors | length > 0 and repo_status != "deleted"))
-    | if length == 0 then empty
-      else
-        "\n## Collection Errors\n\n" +
-        "| Repository | Errors |\n" +
-        "|---|---|\n",
-        (.[] | "| \(.repo_slug) | \(.errors | join("; ")) |\n")
-      end
-  ' "$CATALOG_JSONL"
-} >> "$WRITE_TARGET"
+printf '%s\n' "$REPORT_JSON" | render_report_md > "$WRITE_TARGET"
 
 find_matching_report() {
   local report_dir="$1" fingerprint="$2" f fp

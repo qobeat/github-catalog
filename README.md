@@ -119,6 +119,18 @@ export GITHUB_CATALOG_GIT_HOST=github-personal
 ./github-catalog sync qobeat 'ados-*'
 ```
 
+Or per-owner config file (see [Per-owner config](#per-owner-config) below).
+
+### Preflight with `doctor`
+
+Before your first sync — especially with SSH host aliases — run:
+
+```bash
+./github-catalog doctor qobeat --git-host github-personal
+```
+
+This checks bash/jq/git, `gh` authentication, SSH reachability, and local inventory state.
+
 ## **CLI Reference**
 
 Operate exclusively through the root executable:
@@ -144,6 +156,9 @@ Operate exclusively through the root executable:
 | `--git-host HOST` | no | `github.com` | SSH config Host alias for git clone URLs (e.g. `github-personal` from `~/.ssh/config`). |
 | `--ssh-key PATH` | no | — | Private key for git operations; optional when the Host alias already sets `IdentityFile`. |
 | `--parallel N` | no | `4` | Maximum concurrent repository workers. |
+| `--dry-run` | no | off | Run sentry (`git ls-remote`) only; print planned collect/skip/unreachable actions; no writes. |
+| `--quiet` | no | auto | Suppress progress bar (auto-enabled when stderr is not a TTY). |
+| `--verbose` | no | off | Mirror structured log lines to stderr in real time. |
 
 **Behavior notes:**
 
@@ -153,7 +168,9 @@ Operate exclusively through the root executable:
 - Subsequent syncs reuse cached inventory unless `--refresh` is passed.
 - `--type` visibility filtering applies to both fresh fetches and cached inventory.
 - Matched repos are collected in parallel; output is appended to JSONL under `data/<owner>/`.
-- Optional env vars: `GITHUB_CATALOG_GIT_HOST`, `GITHUB_CATALOG_SSH_KEY`.
+- Optional env vars: `GITHUB_CATALOG_GIT_HOST`, `GITHUB_CATALOG_SSH_KEY`, `GITHUB_CATALOG_PARALLEL`, `GITHUB_CATALOG_VISIBILITY`.
+- Per-owner defaults: `data/<owner>/catalog.config` (see below).
+- On success, prints a one-line stdout summary with collect/skip/fail counts and a suggested next step (`report`).
 
 **Examples:**
 
@@ -193,32 +210,62 @@ Fetches `data/<owner>/user-repositories.jsonl` from GitHub via `gh` **without** 
 ./github-catalog refresh qobeat/ados-proj --public   # single repo
 ```
 
-### `report` — generate Markdown from JSONL
+### `doctor` — preflight checks
 
 ```
-./github-catalog report <owner>
+./github-catalog doctor [owner] [--git-host HOST]
 ```
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<owner>` | yes | Owner whose catalog to report on. |
+Read-only checklist: bash/jq/git versions, `gh` auth (if installed), SSH probe (when owner + git-host given), local inventory/catalog state.
 
-Reads `data/<owner>/git-projects-catalog.jsonl` and writes a timestamped report under `reports/<owner>/report-<timestamp>.md`. Updates `reports/<owner>/latest.md` as a symlink to the newest report.
+```bash
+./github-catalog doctor
+./github-catalog doctor qobeat --git-host github-personal
+```
+
+### `status` — fast catalog overview
+
+```
+./github-catalog status [owner] [--format text|json]
+```
+
+Compact digest without writing a report file. Without an owner, lists all cataloged owners under `data/`.
+
+```bash
+./github-catalog status
+./github-catalog status qobeat
+./github-catalog status qobeat --format json
+```
+
+### `report` — generate report from JSONL
+
+```
+./github-catalog report <owner> [--format md|json]
+```
+
+| Argument / flag | Required | Default | Description |
+|---------------|----------|---------|-------------|
+| `<owner>` | yes | — | Owner whose catalog to report on. |
+| `--format` | no | `md` | `md` writes timestamped Markdown under `reports/<owner>/`; `json` prints aggregation to stdout. |
+
+Reads `data/<owner>/git-projects-catalog.jsonl` (and commits JSONL when present). Markdown output updates `reports/<owner>/latest.md` symlink.
 
 ```bash
 ./github-catalog report qobeat
+./github-catalog report qobeat --format json
 ```
 
 ### `clean` — remove local cache
 
 ```
-./github-catalog clean <owner|all>
+./github-catalog clean <owner|all> [--purge]
 ```
 
-| Argument | Required | Description |
+| Argument / flag | Required | Description |
 |----------|----------|-------------|
-| `<owner>` | yes | Owner whose `data/<owner>/` and `reports/<owner>/` directories are removed. |
-| `all` | yes | Remove all contents of `data/`, `reports/`, and `logs/`. |
+| `<owner>` | yes | Remove `data/<owner>/` (except `catalog.config` unless `--purge`) and `reports/<owner>/`. |
+| `all` | — | Remove all `data/`, `reports/`, and `logs/` contents. |
+| `--purge` | no | Also delete `catalog.config` when cleaning a single owner. |
 
 Does not modify anything on GitHub.
 
@@ -249,6 +296,7 @@ All output is partitioned by the target owner and isolated from version control 
 
 ```
 data/<owner>/
+  ├── catalog.config               # Optional per-owner defaults (git_host, visibility, parallel, ssh_key)
   ├── user-repositories.jsonl      # Discovered inventory (via gh, append-only; status: active|deleted)
   ├── git-projects-catalog.jsonl   # Append-only semantic snapshots (status: active|deleted)
   └── git-projects-commits.jsonl     # Append-only commit history (immutable; status on new lines)
@@ -269,6 +317,30 @@ JSONL records adhere to [docs/github-catalog.schema.json](docs/github-catalog.sc
 jq '.' docs/github-catalog.schema.json
 ```
 
+### Per-owner config
+
+Optional flat `key=value` file at `data/<owner>/catalog.config` (comments with `#` supported):
+
+```
+git_host=github-personal
+visibility=private
+parallel=8
+ssh_key=~/.ssh/id_ed25519_personal
+```
+
+Precedence: **CLI flag** > **`GITHUB_CATALOG_*` env** > **`catalog.config`** > **built-in default**.
+
+`clean <owner>` preserves `catalog.config` unless `--purge` is passed.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Partial failure (e.g. one or more workers failed; catalog still written) |
+| 2 | Usage / bad arguments |
+| 3 | Precondition failed (missing `gh`, missing catalog, no repos matched) |
+
 ## **Testing & Development**
 
 ```bash
@@ -282,6 +354,6 @@ jq '.' docs/github-catalog.schema.json
 |-----|--------|-------|
 | [ADR-001](docs/ADR-001-github-catalog-rewrite.md) | Accepted | Pure Bash/jq/git engine, JSONL streams, sentry skip logic |
 | [ADR-002](docs/ADR-002.md) | Accepted | Unified CLI, dual-auth (`--git-host`), lifecycle tombstones, report UX/AX |
-| [ADR-003](docs/ADR-003.md) | Proposed | Further UX/AX improvements (config, machine-readable output, onboarding) |
+| [ADR-003](docs/ADR-003.md) | Accepted (P0+P1) | doctor, status, config file, JSON report, dry-run, exit codes; P2 deferred |
 | [ADR-004](docs/ADR-004.md) | Proposed | Repository intelligence — deterministic archetype classification |
 | [ADR-005](docs/ADR-005.md) | Proposed | `github-catalog-mcp` — Model Context Protocol server |

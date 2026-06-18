@@ -5,7 +5,7 @@ This project is an **Agent Development Lifecycle (ADLC)** compatible tool. It im
 
 ## **1. Core Directives & Constraints**
 
-* **Architecture Reference:** You MUST adhere to [docs/ADR-001-github-catalog-rewrite.md](docs/ADR-001-github-catalog-rewrite.md) (engine) and [docs/ADR-002.md](docs/ADR-002.md) (current UX/AX layer). [ADR-003](docs/ADR-003.md), [ADR-004](docs/ADR-004.md), and [ADR-005](docs/ADR-005.md) are **proposed** roadmap — do not assume they are implemented.  
+* **Architecture Reference:** You MUST adhere to [docs/ADR-001-github-catalog-rewrite.md](docs/ADR-001-github-catalog-rewrite.md) (engine), [docs/ADR-002.md](docs/ADR-002.md) (UX/AX layer), and [docs/ADR-003.md](docs/ADR-003.md) (P0+P1 UX/AX — implemented). [ADR-004](docs/ADR-004.md) and [ADR-005](docs/ADR-005.md) are **proposed** roadmap.  
 * **Zero Core Dependencies:** The engine is strictly restricted to Bash 5.0+, jq 1.7+, and standard git.  
   * **DO NOT** introduce Python, Node.js, BATS, or external APIs to the core execution logic.  
 * **The API Bridge:** The `gh` CLI is *only* permitted inside `scripts/github-gh.sh` to run `gh repo list` / `gh repo view` (read-only inventory). No other script may call `gh` or network APIs.  
@@ -18,6 +18,41 @@ This project is an **Agent Development Lifecycle (ADLC)** compatible tool. It im
 
 ```
 ./github-catalog <command> [arguments...]
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Partial failure (workers failed; catalog may still be written) |
+| 2 | Usage / bad arguments |
+| 3 | Precondition failed (missing `gh`, missing catalog, no repos matched) |
+
+### Per-owner config
+
+Optional `data/<owner>/catalog.config` (flat `key=value`, `#` comments). Keys: `git_host`, `ssh_key`, `visibility` (`private|public|all`), `parallel`.
+
+Precedence: **CLI flag** > **`GITHUB_CATALOG_*` env** > **`catalog.config`** > **default**.
+
+Env vars: `GITHUB_CATALOG_GIT_HOST`, `GITHUB_CATALOG_SSH_KEY`, `GITHUB_CATALOG_PARALLEL`, `GITHUB_CATALOG_VISIBILITY`.
+
+`clean <owner>` preserves `catalog.config` unless `--purge`.
+
+### Command: `doctor`
+
+Preflight / self-diagnosis (read-only).
+
+```
+./github-catalog doctor [owner] [--git-host HOST]
+```
+
+### Command: `status`
+
+Fast catalog overview without writing a report.
+
+```
+./github-catalog status [owner] [--format text|json]
 ```
 
 ### Command: `sync`
@@ -39,12 +74,15 @@ Fetches inventory (when needed) and appends snapshots/commits for matched reposi
 | `--git-host HOST` | no | `github.com` | SSH config Host alias for git URLs (e.g. `github-personal`). |
 | `--ssh-key PATH` | no | — | Private key for git operations; optional when Host alias sets `IdentityFile`. |
 | `--parallel N` | no | `4` | Max concurrent datafetcher workers. |
+| `--dry-run` | no | off | Sentry only; print planned actions, no writes. |
+| `--quiet` | no | auto | Suppress progress bar (auto when stderr not a TTY). |
+| `--verbose` | no | off | Mirror log lines to stderr. |
 
-`gh` is required when prefetching inventory: wildcard globs, `--refresh`, or first sync without `--git-host` on a literal repo name. Wildcard matching applies **only** to prefetched inventory. Literal repo names can be probed via `git ls-remote` when missing from inventory (use `--git-host` for SSH aliases). Optional env: `GITHUB_CATALOG_GIT_HOST`, `GITHUB_CATALOG_SSH_KEY`.
+`gh` is required when prefetching inventory: wildcard globs, `--refresh`, or first sync without `--git-host` on a literal repo name. On success, prints a one-line stdout summary with next-step hint (`report`).
 
 ```bash
 ./github-catalog sync qobeat ados-proj --git-host github-personal
-./github-catalog sync qobeat 'ados-*' --git-host github-personal --refresh
+./github-catalog sync qobeat 'ados-*' --dry-run
 ./github-catalog sync qobeat 'ados-framework'   # uses cache if present
 ```
 
@@ -68,18 +106,20 @@ Inventory-only update — fetches `user-repositories.jsonl` from GitHub via `gh`
 
 ### Command: `report`
 
-Generates a markdown summary from local JSONL.
+Generates a markdown or JSON summary from local JSONL.
 
 ```
-./github-catalog report <owner>
+./github-catalog report <owner> [--format md|json]
 ```
 
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `<owner>` | yes | Owner to report on. Output: `reports/<owner>/report-<timestamp>.md`; `latest.md` symlink updated. |
+| Argument / flag | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `<owner>` | yes | — | Owner to report on. |
+| `--format` | no | `md` | `md` → `reports/<owner>/report-<timestamp>.md` + `latest.md`; `json` → stdout. |
 
 ```bash
 ./github-catalog report qobeat
+./github-catalog report qobeat --format json
 ```
 
 ### Command: `clean`
@@ -87,13 +127,14 @@ Generates a markdown summary from local JSONL.
 Removes local cached data (not GitHub).
 
 ```
-./github-catalog clean <owner|all>
+./github-catalog clean <owner|all> [--purge]
 ```
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `<owner>` | yes | Remove `data/<owner>/` and `reports/<owner>/`. |
+| `<owner>` | yes | Remove data/reports for owner; preserves `catalog.config` unless `--purge`. |
 | `all` | yes | Remove all `data/`, `reports/`, and `logs/` contents. |
+| `--purge` | no | Also delete `catalog.config`. |
 
 ```bash
 ./github-catalog clean qobeat
@@ -111,10 +152,10 @@ Always verify code modifications using the built-in pure-Bash harness. For any s
 ## **3. Directory Layout**
 
 * `github-catalog` — unified CLI (primary interface)  
-* `scripts/` — internal pipeline modules (Orchestrator, Fetcher, Reporter, GH-Bridge)  
+* `scripts/` — internal pipeline modules (Orchestrator, Fetcher, Reporter, GH-Bridge, Doctor, Status, shared lib/jq)  
 * `tests/` — pure-Bash test suite  
 * `docs/` — Architecture Decision Records and JSON Schema  
-* `data/<user-name>/` — JSONL banks (gitignored)  
+* `data/<user-name>/` — JSONL banks + optional `catalog.config` (gitignored)  
 * `reports/<user-name>/` — generated markdown reports (gitignored)  
 * `logs/` — structured run logs (gitignored)
 
@@ -124,8 +165,11 @@ Agents may read these for implementation context but must route all operations t
 
 | Script | Role |
 |--------|------|
-| `scripts/github-catalog-orchestrator.sh` | Parallel dispatch, inventory cache, SSH-alias URL resolution, tombstone propagation, run summary |
-| `scripts/github-catalog-datafetcher.sh` | Per-repo sentry, bare clone, semantic extraction, skip/tombstone records |
+| `scripts/github-catalog-lib.sh` | Shared exit codes, config loader, TTY/version helpers |
+| `scripts/github-catalog-orchestrator.sh` | Parallel dispatch, dry-run, quiet/verbose, stdout summary |
+| `scripts/github-catalog-datafetcher.sh` | Per-repo sentry, bare clone, semantic extraction, dry-run |
 | `scripts/github-catalog-refresh.sh` | Inventory-only refresh (full owner or single repo) |
-| `scripts/github-catalog-report.sh` | Pure-jq Markdown generation, timestamped reports + `latest.md` symlink |
+| `scripts/github-catalog-report.sh` | Pure-jq report aggregation (`report-data.jq`) → md or json |
+| `scripts/github-catalog-status.sh` | Fast catalog digest (text or json) |
+| `scripts/github-catalog-doctor.sh` | Preflight checks |
 | `scripts/github-gh.sh` | Read-only `gh repo list` / `gh repo view` → `user-repositories.jsonl`; deletion tombstones |

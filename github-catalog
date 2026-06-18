@@ -4,6 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 export REPO_ROOT="$SCRIPT_DIR"
+# shellcheck source=scripts/github-catalog-lib.sh
+source "$SCRIPT_DIR/scripts/github-catalog-lib.sh"
 
 # Colors
 CYAN='\033[0;36m'
@@ -15,7 +17,7 @@ NC='\033[0m'
 for cmd in jq git; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo -e "${RED}ERROR: Required command '$cmd' is not installed.${NC}" >&2
-    exit 1
+    exit "$GC_EXIT_PRECOND"
   fi
 done
 
@@ -27,33 +29,49 @@ Usage:
   ./github-catalog <command> [arguments...]
 
 Commands:
+  doctor [owner]        Preflight checks (tools, gh auth, SSH, local data)
+                        Flags: --git-host HOST
+
+  status [owner]        Compact catalog digest (no report file)
+                        Flags: --format text|json (default: text)
+
   refresh <target>      Refresh inventory only (no catalog collection)
                         Target: <owner> or <owner>/<repo>
                         Flags: --private, --public, --all (default: all)
 
   sync <owner> [glob]   Fetch and snapshot repositories matching glob (default: '*')
-                        Flags: 
+                        Flags:
                           --private, --public, --all (default: all)
                           --git-host HOST  SSH config Host alias (e.g. github-personal)
                           --ssh-key PATH   Private key for git operations (optional)
-                          --refresh (Force GitHub API list update via gh)
-                          --parallel N (default: 4)
+                          --refresh        Force GitHub API list update via gh
+                          --parallel N     Max concurrent workers (default: 4)
+                          --dry-run        Sentry only: show planned actions, no writes
+                          --quiet          Suppress progress bar
+                          --verbose        Mirror log lines to stderr
 
-  report <owner>        Generate pure-jq markdown report from JSONL data
-                        Output: reports/<owner>/report-<timestamp>.md
-                        Symlink: reports/<owner>/latest.md → newest report
+  report <owner>        Generate report from JSONL data
+                        Flags: --format md|json (default: md)
+                        md output: reports/<owner>/report-<timestamp>.md
 
-  clean <owner|all>     Wipe cached data, reports, and logs for an owner (or 'all')
+  clean <owner|all>     Wipe cached data and reports (preserves catalog.config)
+                        Flags: --purge (also remove catalog.config)
+
   test                  Run pure-Bash unit tests
   lint                  Run syntax checks and ShellCheck
 
+Per-owner config: data/<owner>/catalog.config (git_host, ssh_key, visibility, parallel)
+Precedence: CLI flag > GITHUB_CATALOG_* env > catalog.config > default
+
+Exit codes: 0 success | 1 partial failure | 2 usage error | 3 precondition failed
+
 Examples:
+  ./github-catalog doctor qobeat --git-host github-personal
+  ./github-catalog status qobeat
   ./github-catalog refresh qobeat
-  ./github-catalog refresh qobeat/ados-proj --public
   ./github-catalog sync qobeat ados-proj --git-host github-personal
-  ./github-catalog sync qobeat 'ados-*' --git-host github-personal --refresh
-  ./github-catalog sync qobeat 'ados-*' --private --refresh
-  ./github-catalog report qobeat
+  ./github-catalog sync qobeat 'ados-*' --dry-run
+  ./github-catalog report qobeat --format json
   ./github-catalog clean qobeat
 EOF
 }
@@ -70,65 +88,149 @@ sync_needs_gh() {
   return 1
 }
 
-[[ $# -eq 0 ]] && { usage; exit 1; }
+apply_owner_config_sync() {
+  local owner="$1"
+  load_owner_config "$owner"
+  GIT_HOST="$(resolve_option "$GIT_HOST_CLI" "${GITHUB_CATALOG_GIT_HOST:-}" "$(gc_config_get git_host)" "")"
+  SSH_KEY="$(resolve_option "$SSH_KEY_CLI" "${GITHUB_CATALOG_SSH_KEY:-}" "$(gc_config_get ssh_key)" "")"
+  if [[ -z "$TYPE_CLI" ]]; then
+    local cfg_vis
+    cfg_vis="$(gc_config_get visibility)"
+    TYPE="$(resolve_option "" "${GITHUB_CATALOG_VISIBILITY:-}" "$cfg_vis" "all")"
+  else
+    TYPE="$TYPE_CLI"
+  fi
+  PARALLEL="$(resolve_option "$PARALLEL_CLI" "${GITHUB_CATALOG_PARALLEL:-}" "$(gc_config_get parallel)" "4")"
+}
+
+apply_owner_config_refresh() {
+  local owner="$1"
+  load_owner_config "$owner"
+  if [[ -z "$TYPE_CLI" ]]; then
+    local cfg_vis
+    cfg_vis="$(gc_config_get visibility)"
+    TYPE="$(resolve_option "" "${GITHUB_CATALOG_VISIBILITY:-}" "$cfg_vis" "all")"
+  else
+    TYPE="$TYPE_CLI"
+  fi
+}
+
+[[ $# -eq 0 ]] && { usage; exit "$GC_EXIT_USAGE"; }
 
 COMMAND="$1"
 shift
 
 case "$COMMAND" in
+  doctor)
+    OWNER=""
+    GIT_HOST_CLI=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --git-host) GIT_HOST_CLI="${2:?}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        --*) gc_exit_usage "Unknown flag '$1'" ;;
+        *)
+          [[ -z "$OWNER" ]] || gc_exit_usage "unexpected argument: $1"
+          OWNER="$1"
+          shift
+          ;;
+      esac
+    done
+    ARGS=()
+    [[ -n "$OWNER" ]] && ARGS+=("$OWNER")
+    [[ -n "$GIT_HOST_CLI" ]] && ARGS+=(--git-host "$GIT_HOST_CLI")
+    "$REPO_ROOT/scripts/github-catalog-doctor.sh" "${ARGS[@]}"
+    ;;
+
+  status)
+    OWNER=""
+    FORMAT="text"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --format) FORMAT="${2:?}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        --*) gc_exit_usage "Unknown flag '$1'" ;;
+        *)
+          [[ -z "$OWNER" ]] || gc_exit_usage "unexpected argument: $1"
+          OWNER="$1"
+          shift
+          ;;
+      esac
+    done
+    ARGS=(--format "$FORMAT")
+    [[ -n "$OWNER" ]] && ARGS+=("$OWNER")
+    "$REPO_ROOT/scripts/github-catalog-status.sh" "${ARGS[@]}"
+    ;;
+
   refresh)
-    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'refresh' requires a <owner> or <owner>/<repo> target.${NC}" >&2; exit 1; }
+    [[ $# -eq 0 ]] && gc_exit_usage "'refresh' requires a <owner> or <owner>/<repo> target."
     TARGET="$1"; shift
+    TYPE_CLI=""
     TYPE="all"
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --private) TYPE="private"; shift ;;
-        --public)  TYPE="public"; shift ;;
-        --all)     TYPE="all"; shift ;;
-        *) echo -e "${RED}ERROR: Unknown flag '$1'${NC}" >&2; exit 1 ;;
+        --private) TYPE_CLI="private"; shift ;;
+        --public)  TYPE_CLI="public"; shift ;;
+        --all)     TYPE_CLI="all"; shift ;;
+        *) gc_exit_usage "Unknown flag '$1'" ;;
       esac
     done
+    OWNER="${TARGET%%/*}"
+    apply_owner_config_refresh "$OWNER"
     if ! command -v gh >/dev/null 2>&1; then
       echo -e "${RED}ERROR: GitHub CLI ('gh') is required to refresh inventory.${NC}" >&2
-      exit 1
+      exit "$GC_EXIT_PRECOND"
     fi
     echo -e "${CYAN}▶ Refreshing inventory for $TARGET [Type: $TYPE]${NC}"
     "$REPO_ROOT/scripts/github-catalog-refresh.sh" --target "$TARGET" --type "$TYPE"
     ;;
 
   sync)
-    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'sync' requires an <owner> argument.${NC}" >&2; exit 1; }
+    [[ $# -eq 0 ]] && gc_exit_usage "'sync' requires an <owner> argument."
     OWNER="$1"; shift
     GLOB="*"
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
       GLOB="$1"; shift
     fi
 
+    TYPE_CLI=""
     TYPE="all"
     REFRESH=0
-    PARALLEL=4
-    GIT_HOST="${GITHUB_CATALOG_GIT_HOST:-}"
-    SSH_KEY="${GITHUB_CATALOG_SSH_KEY:-}"
+    PARALLEL_CLI=""
+    PARALLEL="4"
+    GIT_HOST_CLI=""
+    SSH_KEY_CLI=""
+    GIT_HOST=""
+    SSH_KEY=""
+    DRY_RUN=0
+    QUIET=0
+    VERBOSE=0
+    QUIET_SET=0
 
     while [[ $# -gt 0 ]]; do
       case "$1" in
-        --private) TYPE="private"; shift ;;
-        --public)  TYPE="public"; shift ;;
-        --all)     TYPE="all"; shift ;;
-        --git-host) GIT_HOST="${2:?--git-host requires a value}"; shift 2 ;;
-        --ssh-key)  SSH_KEY="${2:?--ssh-key requires a value}"; shift 2 ;;
+        --private) TYPE_CLI="private"; shift ;;
+        --public)  TYPE_CLI="public"; shift ;;
+        --all)     TYPE_CLI="all"; shift ;;
+        --git-host) GIT_HOST_CLI="${2:?--git-host requires a value}"; shift 2 ;;
+        --ssh-key)  SSH_KEY_CLI="${2:?--ssh-key requires a value}"; shift 2 ;;
         --refresh) REFRESH=1; shift ;;
-        --parallel) PARALLEL="${2:?--parallel requires a value}"; shift 2 ;;
-        *) echo -e "${RED}ERROR: Unknown flag '$1'${NC}" >&2; exit 1 ;;
+        --parallel) PARALLEL_CLI="${2:?--parallel requires a value}"; shift 2 ;;
+        --dry-run) DRY_RUN=1; shift ;;
+        --quiet)   QUIET=1; QUIET_SET=1; shift ;;
+        --verbose) VERBOSE=1; shift ;;
+        *) gc_exit_usage "Unknown flag '$1'" ;;
       esac
     done
+
+    apply_owner_config_sync "$OWNER"
 
     INVENTORY_FILE="$REPO_ROOT/data/$OWNER/user-repositories.jsonl"
     if sync_needs_gh "$OWNER" "$GLOB" "$REFRESH" "$GIT_HOST"; then
       if [[ ! -f "$INVENTORY_FILE" ]] || (( REFRESH == 1 )); then
         if ! command -v gh >/dev/null 2>&1; then
           echo -e "${RED}ERROR: GitHub CLI ('gh') is required to prefetch inventory (wildcard glob, --refresh, or first sync without --git-host).${NC}" >&2
-          exit 1
+          exit "$GC_EXIT_PRECOND"
         fi
       fi
     fi
@@ -142,27 +244,68 @@ case "$COMMAND" in
     (( REFRESH == 1 )) && ARGS+=(--refresh-repo-list)
     [[ -n "$GIT_HOST" ]] && ARGS+=(--git-host "$GIT_HOST")
     [[ -n "$SSH_KEY" ]] && ARGS+=(--ssh-key "$SSH_KEY")
+    (( DRY_RUN == 1 )) && ARGS+=(--dry-run)
+    (( QUIET == 1 )) && ARGS+=(--quiet)
+    (( VERBOSE == 1 )) && ARGS+=(--verbose)
+    if (( QUIET_SET == 0 )) && ! gc_is_tty_stderr && (( VERBOSE == 0 )); then
+      ARGS+=(--quiet)
+    fi
 
-    echo -e "${CYAN}▶ Starting sync for $OWNER ($GLOB) [Type: $TYPE]${NC}"
+    if (( DRY_RUN == 1 )); then
+      echo -e "${CYAN}▶ Dry-run sync for $OWNER ($GLOB) [Type: $TYPE]${NC}"
+    else
+      echo -e "${CYAN}▶ Starting sync for $OWNER ($GLOB) [Type: $TYPE]${NC}" >&2
+    fi
     "$REPO_ROOT/scripts/github-catalog-orchestrator.sh" "${ARGS[@]}"
     ;;
 
   report)
-    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'report' requires an <owner> argument.${NC}" >&2; exit 1; }
-    OWNER="$1"
-    echo -e "${CYAN}▶ Generating report for $OWNER...${NC}"
-    "$REPO_ROOT/scripts/github-catalog-report.sh" --owner "$OWNER"
+    [[ $# -eq 0 ]] && gc_exit_usage "'report' requires an <owner> argument."
+    OWNER="$1"; shift
+    FORMAT="md"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --format) FORMAT="${2:?}"; shift 2 ;;
+        *) gc_exit_usage "Unknown flag '$1'" ;;
+      esac
+    done
+    if [[ "$FORMAT" == "md" ]]; then
+      echo -e "${CYAN}▶ Generating report for $OWNER...${NC}" >&2
+    fi
+    "$REPO_ROOT/scripts/github-catalog-report.sh" --owner "$OWNER" --format "$FORMAT"
     ;;
 
   clean)
-    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'clean' requires an <owner> argument or 'all'.${NC}" >&2; exit 1; }
-    TARGET="$1"
+    [[ $# -eq 0 ]] && gc_exit_usage "'clean' requires an <owner> argument or 'all'."
+    TARGET="$1"; shift
+    PURGE=0
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --purge) PURGE=1; shift ;;
+        *) gc_exit_usage "Unknown flag '$1'" ;;
+      esac
+    done
     if [[ "$TARGET" == "all" ]]; then
       rm -rf "$REPO_ROOT/data/"* "$REPO_ROOT/reports/"* "$REPO_ROOT/logs/"*
       echo -e "${GREEN}✓ Cleaned all data, reports, and logs.${NC}"
     else
-      rm -rf "$REPO_ROOT/data/$TARGET" "$REPO_ROOT/reports/$TARGET"
-      echo -e "${GREEN}✓ Cleaned data and reports for owner: $TARGET${NC}"
+      if (( PURGE == 1 )); then
+        rm -rf "$REPO_ROOT/data/$TARGET" "$REPO_ROOT/reports/$TARGET"
+        echo -e "${GREEN}✓ Cleaned data and reports for owner: $TARGET (including catalog.config).${NC}"
+      else
+        config_file="$REPO_ROOT/data/$TARGET/catalog.config"
+        config_tmp=""
+        if [[ -f "$config_file" ]]; then
+          config_tmp="$(mktemp)"
+          cp "$config_file" "$config_tmp"
+        fi
+        rm -rf "$REPO_ROOT/data/$TARGET" "$REPO_ROOT/reports/$TARGET"
+        if [[ -n "$config_tmp" ]]; then
+          mkdir -p "$REPO_ROOT/data/$TARGET"
+          mv "$config_tmp" "$REPO_ROOT/data/$TARGET/catalog.config"
+        fi
+        echo -e "${GREEN}✓ Cleaned data and reports for owner: $TARGET (catalog.config preserved).${NC}"
+      fi
     fi
     ;;
 
@@ -176,8 +319,13 @@ case "$COMMAND" in
     "$REPO_ROOT/tests/lint.sh"
     ;;
 
+  -h|--help)
+    usage
+    exit 0
+    ;;
+
   *)
     usage
-    exit 1
+    exit "$GC_EXIT_USAGE"
     ;;
 esac

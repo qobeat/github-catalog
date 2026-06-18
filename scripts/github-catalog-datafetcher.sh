@@ -20,6 +20,7 @@ Options:
   --data-dir DIR            JSONL output directory (default: data/<owner>)
   --log-file PATH           Structured run log file
   --tombstone               Write deleted repo_snapshot from prior data (no git calls)
+  --dry-run                 Sentry only: print planned action, no writes
   -h, --help                Show this help
 
 EOF
@@ -261,6 +262,7 @@ BRANCH="main"
 DATA_DIR="$REPO_ROOT/data"
 LOG_FILE=""
 TOMBSTONE=0
+DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -275,6 +277,7 @@ while [[ $# -gt 0 ]]; do
     --data-dir)     DATA_DIR="${2:?}"; shift 2 ;;
     --log-file)     LOG_FILE="${2:?}"; shift 2 ;;
     --tombstone)    TOMBSTONE=1; shift 1 ;;
+    --dry-run)      DRY_RUN=1; shift 1 ;;
     -h|--help)      usage; exit 0 ;;
     *)              fail "unknown option: $1" ;;
   esac
@@ -283,7 +286,11 @@ done
 [[ -n "$OWNER" ]]      || fail "--owner is required"
 [[ -n "$REPO_SLUG" ]]  || fail "--repo is required"
 [[ -n "$VISIBILITY" ]] || fail "--type is required"
-[[ -n "$REPORT_ID" ]]  || fail "--report-id is required"
+if (( DRY_RUN == 0 )); then
+  [[ -n "$REPORT_ID" ]] || fail "--report-id is required"
+else
+  REPORT_ID="${REPORT_ID:-dry-run}"
+fi
 [[ "$VISIBILITY" =~ ^(private|public|all)$ ]] || fail "--type must be private, public, or all"
 
 if [[ "$DATA_DIR" == "$REPO_ROOT/data" ]]; then
@@ -308,6 +315,10 @@ setup_git_ssh
 log_info "START repo=$REPO_SLUG owner=$OWNER branch=$BRANCH report_id=$REPORT_ID visibility=$VISIBILITY"
 
 if (( TOMBSTONE == 1 )); then
+  if (( DRY_RUN == 1 )); then
+    printf '%s\ttombstone\tdeleted\n' "$REPO_SLUG"
+    exit 0
+  fi
   log_info "TOMBSTONE repo=$REPO_SLUG"
   write_deleted_record
   exit 0
@@ -324,6 +335,10 @@ log_result "$cmd" "$GIT_EXIT" "sha=${REMOTE_SHA:-empty}"
 
 # --- STEP 2: Guard unreachable ---
 if (( GIT_EXIT != 0 )) || [[ -z "$REMOTE_SHA" ]]; then
+  if (( DRY_RUN == 1 )); then
+    printf '%s\tunreachable\t%s\n' "$REPO_SLUG" "$REPO_URL"
+    exit 1
+  fi
   log_error "UNREACHABLE repo=$REPO_SLUG url=$REPO_URL"
   write_error_record "unreachable"
   exit 1
@@ -344,8 +359,17 @@ log_info "sentry slug=$REPO_SLUG remote=$REMOTE_SHA last=${LAST_SHA:-none}"
 
 # --- STEP 4: Skip unchanged ---
 if [[ -n "$LAST_SHA" && "$REMOTE_SHA" == "$LAST_SHA" ]]; then
+  if (( DRY_RUN == 1 )); then
+    printf '%s\tskip\tunchanged\n' "$REPO_SLUG"
+    exit 0
+  fi
   log_info "SKIP repo=$REPO_SLUG sha_unchanged=$REMOTE_SHA"
   write_skip_record
+  exit 0
+fi
+
+if (( DRY_RUN == 1 )); then
+  printf '%s\tcollect\tHEAD changed\n' "$REPO_SLUG"
   exit 0
 fi
 
