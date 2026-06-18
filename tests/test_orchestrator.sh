@@ -20,9 +20,9 @@ match_glob() {
 parse_repo_jsonl() {
   local json_file="$1" glob="$2"
   local -a repos=()
-  local slug url branch count=0
+  local slug
 
-  while IFS=$'\t' read -r slug url branch; do
+  while IFS=$'\t' read -r slug _ _; do
     [[ -n "$slug" ]] || continue
     match_glob "$slug" "$glob" || continue
     repos+=("$slug")

@@ -59,6 +59,7 @@ if [[ "$CMD" == "list-repos" ]]; then
   fi
 
   # Call gh and format output directly to schema-compliant JSONL
+  # shellcheck disable=SC2016
   gh repo list "${GH_ARGS[@]}" --jq \
     --arg sv "1.0.0" \
     --arg rid "$REPORT_ID" \
