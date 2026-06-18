@@ -1,6 +1,6 @@
 # ADR-001: github-catalog — Pure Bash/jq/git Rewrite
 
-**Status:** Proposed  
+**Status:** Accepted  
 **Date:** 2026-06-17  
 **Environment:** WSL2 · Linux 6.6.114.1-microsoft-standard-WSL2 · x86\_64 · Bash 5.0+ · jq 1.7  
 **Replaces:** Python + `gh`-CLI implementation in `github-catalog.zip`
@@ -32,6 +32,12 @@ github-catalog/
 │   ├── github-catalog-orchestrator.sh   # parallel dispatch + progress bar
 │   ├── github-catalog-datafetcher.sh    # single-repo sentry + collection
 │   └── github-catalog-report.sh         # pure-jq markdown generator
+├── tests/
+│   ├── lint.sh                          # bash -n + shellcheck runner
+│   ├── test.sh                          # unit test runner + smoke orchestration
+│   ├── smoke-test.sh                    # offline sentry + report integration tests
+│   ├── test_*.sh                        # unit tests (extraction, orchestrator, schema)
+│   └── MANIFEST.md                      # agent testing instructions
 ├── data/
 │   ├── git-projects-catalog.jsonl        # repo snapshots (gitignored)
 │   └── git-projects-commits.jsonl        # commit records  (gitignored)
@@ -40,6 +46,7 @@ github-catalog/
 ├── logs/
 │   └── github-catalog-YYYY-MM-DD.log      # timestamped run log (gitignored)
 ├── docs/
+│   ├── ADR-001-github-catalog-rewrite.md  # this document
 │   └── github-catalog.schema.json         # tracked canonical schema
 ├── README.md
 └── .gitignore
@@ -681,7 +688,15 @@ Each step names the file to create and states its acceptance test.
 
 ## Testing Strategy
 
-### 1. Syntax check (zero-cost, must always pass)
+Testing uses pure Bash only. The former Python-based `lint-python.sh` helper was removed; use `tests/lint.sh`, `tests/test.sh`, and `tests/smoke-test.sh` instead.
+
+### 1. Lint and syntax check (zero-cost, must always pass)
+
+```bash
+./tests/lint.sh
+```
+
+Or manually:
 
 ```bash
 bash -n scripts/github-catalog-orchestrator.sh
@@ -689,80 +704,21 @@ bash -n scripts/github-catalog-datafetcher.sh
 bash -n scripts/github-catalog-report.sh
 ```
 
-### 2. Offline smoke test (no network required)
+### 2. Unit tests
 
 ```bash
-#!/usr/bin/env bash
-# tests/smoke-test.sh
-
-set -euo pipefail
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-
-# Create a local bare git repo to simulate a remote
-BARE="$WORK/fake-remote.git"
-git init --bare "$BARE"
-
-# Seed it with one commit
-SEED="$(mktemp -d)"
-trap 'rm -rf "$SEED"' EXIT INT TERM
-git -C "$SEED" init
-git -C "$SEED" config user.email "test@test.com"
-git -C "$SEED" config user.name "Test"
-cat > "$SEED/README.md" <<'MD'
-# Fake Project
-
-## GOAL
-Test the sentry and collection logic.
-
-## OBJECTIVES
-1. Write a JSONL line
-2. Skip on re-run
-MD
-git -C "$SEED" add .
-git -C "$SEED" commit -m "init"
-git -C "$SEED" remote add origin "$BARE"
-git -C "$SEED" push origin main
-
-DATA_DIR="$WORK/data"
-mkdir -p "$DATA_DIR"
-
-# --- First run: should collect ---
-./scripts/github-catalog-datafetcher.sh \
-  --owner "testowner" \
-  --repo  "fake-remote" \
-  --repo-url "file://$BARE" \
-  --branch "main" \
-  --type  "private" \
-  --report-id "2026-06-17T00:00:00Z" \
-  --data-dir "$DATA_DIR"
-
-CATALOG="$DATA_DIR/git-projects-catalog.jsonl"
-[[ -f "$CATALOG" ]] || { echo "FAIL: catalog not written"; exit 1; }
-
-# Every line must parse
-jq -c '.' < "$CATALOG" > /dev/null || { echo "FAIL: invalid JSONL"; exit 1; }
-
-SKIPPED_1=$(jq -r '.collection_skipped' < <(tail -1 "$CATALOG"))
-[[ "$SKIPPED_1" == "false" ]] || { echo "FAIL: first run must not skip"; exit 1; }
-
-# --- Second run: same HEAD → must skip ---
-./scripts/github-catalog-datafetcher.sh \
-  --owner "testowner" \
-  --repo  "fake-remote" \
-  --repo-url "file://$BARE" \
-  --branch "main" \
-  --type  "private" \
-  --report-id "2026-06-17T00:00:01Z" \
-  --data-dir "$DATA_DIR"
-
-SKIPPED_2=$(jq -r '.collection_skipped' < <(tail -1 "$CATALOG"))
-[[ "$SKIPPED_2" == "true" ]] || { echo "FAIL: second run must skip (same SHA)"; exit 1; }
-
-echo "PASS: sentry logic OK"
+./tests/test.sh
 ```
 
-### 3. JSONL integrity check
+Discovers and runs all `tests/test_*.sh` files, then invokes smoke tests.
+
+### 3. Offline smoke test (no network required)
+
+```bash
+./tests/smoke-test.sh
+```
+
+### 4. JSONL integrity check
 
 ```bash
 # Run after any datafetcher invocation — every line in both files must parse
@@ -770,7 +726,7 @@ jq -c '.' < data/git-projects-catalog.jsonl  > /dev/null && echo "catalog OK"
 jq -c '.' < data/git-projects-commits.jsonl  > /dev/null && echo "commits OK"
 ```
 
-### 4. Report smoke test
+### 5. Report smoke test
 
 ```bash
 ./scripts/github-catalog-report.sh \
@@ -781,7 +737,7 @@ jq -c '.' < data/git-projects-commits.jsonl  > /dev/null && echo "commits OK"
 [[ $(wc -l < /tmp/test-report.md) -gt 10 ]] && echo "PASS: report non-empty"
 ```
 
-### 5. Deduplication check for commits
+### 6. Deduplication check for commits
 
 ```bash
 # No (repo_slug, sha) pair should appear more than once

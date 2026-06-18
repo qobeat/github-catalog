@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "github-catalog/schema/1.0.0",
   "title": "GitHub Catalog JSONL Record Schema",
-  "description": "Schema for two append-only JSONL streams: git-projects-catalog.jsonl and git-projects-commits.jsonl. Each line is one JSON object matching either repo_snapshot or commit.",
+  "description": "Schema for append-only JSONL streams: git-projects-catalog.jsonl (repo_snapshot, run) and git-projects-commits.jsonl (commit). Each line is one JSON object.",
   "oneOf": [
     { "$ref": "#/$defs/repo_snapshot" },
-    { "$ref": "#/$defs/commit" }
+    { "$ref": "#/$defs/commit" },
+    { "$ref": "#/$defs/run" }
   ],
   "$defs": {
     "iso_datetime": {
@@ -35,7 +36,7 @@
       "required": ["schema_version", "record_type", "report_id", "generated_at"],
       "properties": {
         "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-        "record_type":    { "type": "string", "enum": ["repo_snapshot", "commit"] },
+        "record_type":    { "type": "string", "enum": ["repo_snapshot", "commit", "run"] },
         "report_id":      { "$ref": "#/$defs/iso_datetime", "description": "Run ID shared by all records from one orchestrator invocation" },
         "generated_at":   { "$ref": "#/$defs/iso_datetime", "description": "Moment this specific record was written" }
       }
@@ -102,6 +103,29 @@
         "author_email":   { "type": ["string", "null"] },
         "message":        { "type": "string", "description": "First line of commit message only" },
         "files_changed":  { "type": "integer", "minimum": 0 }
+      }
+    },
+    "run": {
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "type": "object",
+      "required": [
+        "schema_version", "record_type", "report_id", "generated_at",
+        "owner", "repos_glob", "visibility_filter",
+        "repos_total", "repos_completed", "failures", "parallel"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version":    { "type": "string" },
+        "record_type":       { "const": "run" },
+        "report_id":         { "$ref": "#/$defs/iso_datetime" },
+        "generated_at":      { "$ref": "#/$defs/iso_datetime" },
+        "owner":             { "type": "string", "minLength": 1 },
+        "repos_glob":        { "type": "string" },
+        "visibility_filter": { "type": "string", "enum": ["private", "public", "all"] },
+        "repos_total":       { "type": "integer", "minimum": 0 },
+        "repos_completed":   { "type": "integer", "minimum": 0 },
+        "failures":          { "type": "integer", "minimum": 0 },
+        "parallel":          { "type": "integer", "minimum": 1 }
       }
     }
   }
