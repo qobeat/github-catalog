@@ -10,28 +10,16 @@ Required:
   --owner, --user NAME_OR_URL   Git host owner (URL forms like https://github.com/qobeat accepted)
   --repos GLOB                  Repository glob, e.g. '*' or 'ados-*'
   --type private|public|all     Visibility filter (recorded in run summary)
-  --repo-list-file PATH         Newline-separated repo slugs; optional URL and branch per line
 
 Options:
+  --refresh-repo-list           Call github-gh.sh to fetch the latest repo list from GitHub
   --parallel N                  Max concurrent workers (default: 4)
   --limit N                     Cap matched repos (0 = no limit)
-  --data-dir DIR                JSONL output directory (default: data/)
+  --data-dir DIR                Base JSONL directory (default: data/<user-name>)
   --log-dir DIR                 Log file directory (default: logs/)
   --report-id ID                UTC run id (default: current timestamp)
-  --fetcher PATH                Datafetcher script (default: scripts/github-catalog-datafetcher.sh)
+  --fetcher PATH                Datafetcher script
   -h, --help                    Show this help
-
-Repo list file format (one repo per line):
-  slug
-  slug  git@github.com:owner/slug.git
-  slug  file:///path/to/repo.git  main
-
-Lines starting with # are ignored.
-
-Examples:
-  scripts/github-catalog-orchestrator.sh \
-    --owner qobeat --repos 'ados-*' --type private \
-    --repo-list-file repos.txt --parallel 4
 
 EOF
 }
@@ -124,7 +112,8 @@ DATA_DIR="$REPO_ROOT/data"
 LOG_DIR="$REPO_ROOT/logs"
 REPORT_ID="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 FETCHER="$SCRIPT_DIR/github-catalog-datafetcher.sh"
-REPO_LIST_FILE=""
+GH_HELPER="$SCRIPT_DIR/github-gh.sh"
+REFRESH_REPO_LIST=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -137,7 +126,7 @@ while [[ $# -gt 0 ]]; do
     --log-dir)      LOG_DIR="${2:?}"; shift 2 ;;
     --report-id)    REPORT_ID="${2:?}"; shift 2 ;;
     --fetcher)      FETCHER="${2:?}"; shift 2 ;;
-    --repo-list-file) REPO_LIST_FILE="${2:?}"; shift 2 ;;
+    --refresh-repo-list) REFRESH_REPO_LIST=1; shift 1 ;;
     -h|--help)      usage; exit 0 ;;
     *)              fail "unknown option: $1" ;;
   esac
@@ -146,10 +135,8 @@ done
 [[ -n "$OWNER" ]]           || fail "--owner is required"
 [[ -n "$REPOS_GLOB" ]]      || fail "--repos is required"
 [[ -n "$VISIBILITY" ]]      || fail "--type is required"
-[[ -n "$REPO_LIST_FILE" ]]  || fail "--repo-list-file is required (pure bash orchestrator does not call GitHub API)"
-[[ -f "$REPO_LIST_FILE" ]]  || fail "repo list file not found: $REPO_LIST_FILE"
 [[ "$VISIBILITY" =~ ^(private|public|all)$ ]] || fail "--type must be private, public, or all"
-[[ -x "$FETCHER" ]]           || fail "fetcher not executable: $FETCHER"
+[[ -x "$FETCHER" ]]         || fail "fetcher not executable: $FETCHER"
 
 if ! [[ "$PARALLEL" =~ ^[0-9]+$ ]] || ! (( PARALLEL >= 1 )); then
   fail "--parallel must be >= 1"
@@ -159,24 +146,38 @@ if ! [[ "$LIMIT" =~ ^[0-9]+$ ]]; then
 fi
 
 OWNER="$(normalize_owner "$OWNER")"
-mkdir -p "$DATA_DIR" "$LOG_DIR"
 
+# Establish target user directory
+if [[ "$DATA_DIR" == "$REPO_ROOT/data" ]]; then
+  DATA_DIR="$DATA_DIR/$OWNER"
+fi
+
+mkdir -p "$DATA_DIR" "$LOG_DIR"
 LOG_FILE="$LOG_DIR/github-catalog-$(date -u +%Y-%m-%d).log"
 CATALOG_JSONL="$DATA_DIR/git-projects-catalog.jsonl"
+REPO_LIST_FILE="$DATA_DIR/user-repositories.jsonl"
+
+# Fetch list from GitHub if requested or missing
+if [[ ! -f "$REPO_LIST_FILE" ]] || (( REFRESH_REPO_LIST == 1 )); then
+  log_info "Refreshing repository list via github-gh.sh..."
+  "$GH_HELPER" list-repos \
+    --owner "$OWNER" \
+    --type "$VISIBILITY" \
+    --report-id "$REPORT_ID" \
+    --data-dir "$DATA_DIR" \
+    --limit 1000
+fi
+
+[[ -f "$REPO_LIST_FILE" ]] || fail "Repo list file not found and could not be generated: $REPO_LIST_FILE"
 
 declare -a REPOS=()
 declare -A REPO_URLS=()
 declare -A REPO_BRANCHES=()
 
 count=0
-while IFS= read -r line || [[ -n "$line" ]]; do
-  line="${line%%#*}"
-  line="${line#"${line%%[![:space:]]*}"}"
-  line="${line%"${line##*[![:space:]]}"}"
-  [[ -z "$line" ]] && continue
 
-  slug="" url="" branch=""
-  read -r slug url branch <<< "$line"
+# Parse the user_repository JSONL file, deduplicating by slug to get the latest state
+while IFS=$'\t' read -r slug url branch; do
   [[ -n "$slug" ]] || continue
   match_glob "$slug" "$REPOS_GLOB" || continue
 
@@ -188,7 +189,12 @@ while IFS= read -r line || [[ -n "$line" ]]; do
   if (( LIMIT > 0 && count >= LIMIT )); then
     break
   fi
-done < "$REPO_LIST_FILE"
+done < <(jq -rn '
+  [inputs | select(.record_type == "user_repository")]
+  | group_by(.repo_slug)
+  | map(sort_by(.generated_at) | last)
+  | .[] | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
+' "$REPO_LIST_FILE")
 
 ((${#REPOS[@]} > 0)) || fail "no repositories matched glob=$REPOS_GLOB in $REPO_LIST_FILE"
 

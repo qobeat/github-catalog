@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unit tests for orchestrator helpers (no network)
+# Unit tests for orchestrator helpers
 
 normalize_owner() {
   local o="$1"
@@ -17,25 +17,21 @@ match_glob() {
   [[ "$name" == $pattern ]]
 }
 
-parse_repo_list() {
-  local list_file="$1" glob="$2"
+parse_repo_jsonl() {
+  local json_file="$1" glob="$2"
   local -a repos=()
-  local line slug _url _branch count=0
+  local slug url branch count=0
 
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line%%#*}"
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" ]] && continue
-
-    slug="" _url="" _branch=""
-    read -r slug _url _branch <<< "$line"
+  while IFS=$'\t' read -r slug url branch; do
     [[ -n "$slug" ]] || continue
     match_glob "$slug" "$glob" || continue
-
     repos+=("$slug")
-    count=$((count + 1))
-  done < "$list_file"
+  done < <(jq -rn '
+    [inputs | select(.record_type == "user_repository")]
+    | group_by(.repo_slug)
+    | map(sort_by(.generated_at) | last)
+    | .[] | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
+  ' "$json_file")
 
   printf '%s\n' "${repos[@]}"
 }
@@ -66,31 +62,33 @@ test_match_glob_no_match() {
   fi
 }
 
-test_parse_repo_list_comments_and_urls() {
+test_parse_repo_jsonl_deduplication() {
   local tmp
   tmp="$(mktemp)"
-  cat > "$tmp" <<'EOF'
-# comment line
-repo-a
-repo-b  git@github.com:owner/repo-b.git  develop
-repo-c  file:///tmp/x.git
+  cat > "$tmp" <<EOF
+{"record_type": "user_repository", "repo_slug": "repo-a", "generated_at": "2023-01-01T00:00:00Z"}
+{"record_type": "user_repository", "repo_slug": "repo-a", "generated_at": "2023-01-02T00:00:00Z", "default_branch": "main"}
+{"record_type": "user_repository", "repo_slug": "repo-b", "repo_url": "git@git", "generated_at": "2023-01-01T00:00:00Z"}
 EOF
 
-  mapfile -t slugs < <(parse_repo_list "$tmp" "*")
+  mapfile -t slugs < <(parse_repo_jsonl "$tmp" "*")
   rm -f "$tmp"
 
-  assert_eq "3" "${#slugs[@]}"
+  assert_eq "2" "${#slugs[@]}"
   assert_eq "repo-a" "${slugs[0]}"
   assert_eq "repo-b" "${slugs[1]}"
-  assert_eq "repo-c" "${slugs[2]}"
 }
 
-test_parse_repo_list_glob_filter() {
+test_parse_repo_jsonl_glob_filter() {
   local tmp
   tmp="$(mktemp)"
-  printf '%s\n' 'ados-one' 'other-two' 'ados-three' > "$tmp"
+  cat > "$tmp" <<EOF
+{"record_type": "user_repository", "repo_slug": "ados-one", "generated_at": "2023-01-01T00:00:00Z"}
+{"record_type": "user_repository", "repo_slug": "other-two", "generated_at": "2023-01-01T00:00:00Z"}
+{"record_type": "user_repository", "repo_slug": "ados-three", "generated_at": "2023-01-01T00:00:00Z"}
+EOF
 
-  mapfile -t slugs < <(parse_repo_list "$tmp" "ados-*")
+  mapfile -t slugs < <(parse_repo_jsonl "$tmp" "ados-*")
   rm -f "$tmp"
 
   assert_eq "2" "${#slugs[@]}"

@@ -15,8 +15,8 @@ Required:
 Options:
   --repo-url URL            Full clone URL (SSH, HTTPS, or file://)
   --branch NAME             Default branch (default: main)
-  --data-dir DIR            JSONL output directory (default: data/)
-  --log-file PATH           Structured run log file (default: logs/github-catalog-YYYY-MM-DD.log)
+  --data-dir DIR            JSONL output directory (default: data/<owner>)
+  --log-file PATH           Structured run log file
   -h, --help                Show this help
 
 EOF
@@ -194,6 +194,10 @@ done
 [[ -n "$VISIBILITY" ]] || fail "--type is required"
 [[ -n "$REPORT_ID" ]]  || fail "--report-id is required"
 [[ "$VISIBILITY" =~ ^(private|public|all)$ ]] || fail "--type must be private, public, or all"
+
+if [[ "$DATA_DIR" == "$REPO_ROOT/data" ]]; then
+  DATA_DIR="$DATA_DIR/$OWNER"
+fi
 
 if [[ -z "$LOG_FILE" ]]; then
   LOG_FILE="$REPO_ROOT/logs/github-catalog-$(date -u +%Y-%m-%d).log"

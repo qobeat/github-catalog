@@ -1,27 +1,37 @@
-: ${REPO_OWNER:="qobeat"}
-: ${REPO_LIST_FILE:=repos.txt}
-: ${REPO_MASK:="*"}
-: ${REPO_TYPE:="private"}
-: ${PARALLEL:="4"}
+#!/usr/bin/env bash
+# scripts/qobeat-repos.sh - User wrapper for the GitHub Catalog orchestrator
+set -euo pipefail
 
-if (($# == 0 )); then
-  echo "Usage: $0 [--repo-list-file <file>] --repo-mask <mask> [--repo-type <type>] [--parallel <parallel>]"
+usage() {
+  cat <<'EOF'
+qobeat-repos.sh - Generate catalog for qobeat repositories
+
+This wrapper automatically defaults the owner to "qobeat" and routes data to
+the standard data/qobeat/ location.
+
+Usage:
+  scripts/qobeat-repos.sh <repo-mask> [additional orchestrator args...]
+
+Examples:
+  scripts/qobeat-repos.sh '*' --type private --refresh-repo-list
+  scripts/qobeat-repos.sh 'ados-*' --type public --parallel 5
+EOF
+}
+
+if [[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]]; then
+  usage
   exit 1
 fi
 
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --repo-list-file) REPO_LIST_FILE="${2:?}"; shift 2 ;;
-    --repo-mask) REPO_MASK="${2:?}"; shift 2 ;;
-    --repo-type) REPO_TYPE="${2:?}"; shift 2 ;;
-    --parallel) PARALLEL="${2:?}"; shift 2 ;;
-    *) echo "Unknown option: $1"; exit 1 ;;
-  esac
-done
+REPO_MASK="$1"
+shift
 
-./scripts/github-catalog-orchestrator.sh \
-  --owner "$REPO_OWNER" \
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ORCHESTRATOR="$SCRIPT_DIR/github-catalog-orchestrator.sh"
+
+echo "Executing catalog orchestrator for owner 'qobeat' with mask '$REPO_MASK'..."
+
+"$ORCHESTRATOR" \
+  --owner "qobeat" \
   --repos "$REPO_MASK" \
-  --type "$REPO_TYPE"
-  --repo-list-file "$REPO_LIST_FILE" \
-  --parallel "$PARALLEL"
+  "$@"

@@ -1,12 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "github-catalog/schema/1.0.0",
+  "$id": "github-catalog/schema/1.1.0",
   "title": "GitHub Catalog JSONL Record Schema",
-  "description": "Schema for append-only JSONL streams: git-projects-catalog.jsonl (repo_snapshot, run) and git-projects-commits.jsonl (commit). Each line is one JSON object.",
+  "description": "Schema for append-only JSONL streams. Each line is one JSON object matching repo_snapshot, commit, run, or user_repository.",
   "oneOf": [
     { "$ref": "#/$defs/repo_snapshot" },
     { "$ref": "#/$defs/commit" },
-    { "$ref": "#/$defs/run" }
+    { "$ref": "#/$defs/run" },
+    { "$ref": "#/$defs/user_repository" }
   ],
   "$defs": {
     "iso_datetime": {
@@ -16,61 +17,70 @@
     },
     "sha40": {
       "type": "string",
-      "pattern": "^[0-9a-f]{40}$",
-      "description": "Full 40-character lowercase git commit SHA"
+      "pattern": "^[0-9a-f]{40}$"
     },
     "extracted_field": {
-      "description": "Verbatim text extracted from a source file. Never summarized or rewritten. LLM agents: when producing records, set source_file to 'llm-generated'.",
       "type": "object",
       "required": ["text", "source_file", "source_heading"],
       "additionalProperties": false,
       "properties": {
-        "text":           { "type": "string", "description": "Verbatim content, no summarization" },
-        "source_file":    { "type": "string", "description": "Relative path to the file this was extracted from" },
-        "source_heading": { "type": "string", "description": "Exact heading or key under which the text appeared" }
+        "text":           { "type": "string" },
+        "source_file":    { "type": "string" },
+        "source_heading": { "type": "string" }
       }
     },
     "envelope": {
-      "description": "Fields present on every record regardless of type",
       "type": "object",
       "required": ["schema_version", "record_type", "report_id", "generated_at"],
       "properties": {
         "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
-        "record_type":    { "type": "string", "enum": ["repo_snapshot", "commit", "run"] },
-        "report_id":      { "$ref": "#/$defs/iso_datetime", "description": "Run ID shared by all records from one orchestrator invocation" },
-        "generated_at":   { "$ref": "#/$defs/iso_datetime", "description": "Moment this specific record was written" }
+        "record_type":    { "type": "string", "enum": ["repo_snapshot", "commit", "run", "user_repository"] },
+        "report_id":      { "$ref": "#/$defs/iso_datetime" },
+        "generated_at":   { "$ref": "#/$defs/iso_datetime" }
+      }
+    },
+    "user_repository": {
+      "allOf": [{ "$ref": "#/$defs/envelope" }],
+      "type": "object",
+      "required": [
+        "schema_version", "record_type", "report_id", "generated_at",
+        "owner", "repo_slug", "repo_url", "visibility", "default_branch"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": { "type": "string" },
+        "record_type":    { "const": "user_repository" },
+        "report_id":      { "$ref": "#/$defs/iso_datetime" },
+        "generated_at":   { "$ref": "#/$defs/iso_datetime" },
+        "owner":          { "type": "string" },
+        "repo_slug":      { "type": "string" },
+        "repo_url":       { "type": "string" },
+        "visibility":     { "type": "string" },
+        "default_branch": { "type": "string" }
       }
     },
     "repo_snapshot": {
       "allOf": [{ "$ref": "#/$defs/envelope" }],
       "type": "object",
       "required": [
-        "schema_version", "record_type", "report_id", "generated_at",
         "collection_skipped", "owner", "repo_slug", "repo_url",
         "default_branch", "head_commit_sha", "key_files_present", "errors"
       ],
-      "additionalProperties": false,
       "properties": {
         "schema_version":   { "type": "string" },
         "record_type":      { "const": "repo_snapshot" },
         "report_id":        { "$ref": "#/$defs/iso_datetime" },
         "generated_at":     { "$ref": "#/$defs/iso_datetime" },
-        "collection_skipped": {
-          "type": "boolean",
-          "description": "true when HEAD SHA matches last recorded snapshot; catalog fields are copied verbatim from that prior record"
-        },
-        "owner":            { "type": "string", "minLength": 1, "description": "Git host owner or organization, no slashes" },
-        "repo_slug":        { "type": "string", "minLength": 1, "description": "Repository short name only, no owner prefix" },
-        "repo_url":         { "type": "string", "description": "Full SSH or HTTPS clone URL" },
-        "default_branch":   { "type": "string", "minLength": 1 },
+        "collection_skipped": { "type": "boolean" },
+        "owner":            { "type": "string" },
+        "repo_slug":        { "type": "string" },
+        "repo_url":         { "type": "string" },
+        "default_branch":   { "type": "string" },
         "head_commit_sha":  { "$ref": "#/$defs/sha40" },
         "head_commit_at":   { "type": ["string", "null"] },
-        "git_description":  { "type": ["string", "null"], "description": "From .git/description or git config" },
-        "created_at":       { "type": ["string", "null"], "description": "Date of first commit via git log --reverse" },
-        "key_files_present": {
-          "type": "array", "items": { "type": "string" },
-          "description": "Files from a sentinel list found via git ls-tree"
-        },
+        "git_description":  { "type": ["string", "null"] },
+        "created_at":       { "type": ["string", "null"] },
+        "key_files_present": { "type": "array", "items": { "type": "string" } },
         "goal":             { "oneOf": [{ "$ref": "#/$defs/extracted_field" }, { "type": "null" }] },
         "objectives":       { "oneOf": [{ "$ref": "#/$defs/extracted_field" }, { "type": "null" }] },
         "flows":            { "oneOf": [{ "$ref": "#/$defs/extracted_field" }, { "type": "null" }] },
@@ -82,11 +92,9 @@
       "allOf": [{ "$ref": "#/$defs/envelope" }],
       "type": "object",
       "required": [
-        "schema_version", "record_type", "report_id", "generated_at",
         "owner", "repo_slug", "repo_url", "default_branch",
         "sha", "short_sha", "committed_at", "message", "files_changed"
       ],
-      "additionalProperties": false,
       "properties": {
         "schema_version": { "type": "string" },
         "record_type":    { "const": "commit" },
@@ -97,35 +105,33 @@
         "repo_url":       { "type": "string" },
         "default_branch": { "type": "string" },
         "sha":            { "$ref": "#/$defs/sha40" },
-        "short_sha":      { "type": "string", "minLength": 7, "maxLength": 7 },
+        "short_sha":      { "type": "string" },
         "committed_at":   { "type": ["string", "null"] },
         "author_name":    { "type": ["string", "null"] },
         "author_email":   { "type": ["string", "null"] },
-        "message":        { "type": "string", "description": "First line of commit message only" },
-        "files_changed":  { "type": "integer", "minimum": 0 }
+        "message":        { "type": "string" },
+        "files_changed":  { "type": "integer" }
       }
     },
     "run": {
       "allOf": [{ "$ref": "#/$defs/envelope" }],
       "type": "object",
       "required": [
-        "schema_version", "record_type", "report_id", "generated_at",
-        "owner", "repos_glob", "visibility_filter",
-        "repos_total", "repos_completed", "failures", "parallel"
+        "owner", "repos_glob", "visibility_filter", "repos_total",
+        "repos_completed", "failures", "parallel"
       ],
-      "additionalProperties": false,
       "properties": {
         "schema_version":    { "type": "string" },
         "record_type":       { "const": "run" },
         "report_id":         { "$ref": "#/$defs/iso_datetime" },
         "generated_at":      { "$ref": "#/$defs/iso_datetime" },
-        "owner":             { "type": "string", "minLength": 1 },
+        "owner":             { "type": "string" },
         "repos_glob":        { "type": "string" },
-        "visibility_filter": { "type": "string", "enum": ["private", "public", "all"] },
-        "repos_total":       { "type": "integer", "minimum": 0 },
-        "repos_completed":   { "type": "integer", "minimum": 0 },
-        "failures":          { "type": "integer", "minimum": 0 },
-        "parallel":          { "type": "integer", "minimum": 1 }
+        "visibility_filter": { "type": "string" },
+        "repos_total":       { "type": "integer" },
+        "repos_completed":   { "type": "integer" },
+        "failures":          { "type": "integer" },
+        "parallel":          { "type": "integer" }
       }
     }
   }
