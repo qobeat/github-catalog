@@ -58,9 +58,9 @@ if [[ "$CMD" == "list-repos" ]]; then
     GH_ARGS+=( "--visibility" "$VISIBILITY" )
   fi
 
-  # Call gh and format output directly to schema-compliant JSONL
+  # Call gh and format output to schema-compliant JSONL via jq
   # shellcheck disable=SC2016
-  gh repo list "${GH_ARGS[@]}" --jq \
+  gh repo list "${GH_ARGS[@]}" | jq -c \
     --arg sv "1.0.0" \
     --arg rid "$REPORT_ID" \
     --arg gat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -73,7 +73,7 @@ if [[ "$CMD" == "list-repos" ]]; then
       owner: $own,
       repo_slug: .name,
       repo_url: .url,
-      visibility: .visibility,
+      visibility: (.visibility | ascii_downcase),
       default_branch: (.defaultBranchRef.name // "main")
     }' >> "$OUT_FILE"
     

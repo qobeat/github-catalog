@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(wsl -d ubuntu -- bash -lc \"cd /home/alex/dev/github-catalog && git log --oneline -20\")"
+    ]
+  }
+}

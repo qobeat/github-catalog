@@ -18,7 +18,7 @@ match_glob() {
 }
 
 parse_repo_jsonl() {
-  local json_file="$1" glob="$2"
+  local json_file="$1" glob="$2" visibility="${3:-all}"
   local -a repos=()
   local slug
 
@@ -26,11 +26,13 @@ parse_repo_jsonl() {
     [[ -n "$slug" ]] || continue
     match_glob "$slug" "$glob" || continue
     repos+=("$slug")
-  done < <(jq -rn '
+  done < <(jq -rn --arg vis "$visibility" '
     [inputs | select(.record_type == "user_repository")]
     | group_by(.repo_slug)
     | map(sort_by(.generated_at) | last)
-    | .[] | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
+    | .[]
+    | select($vis == "all" or (.visibility | ascii_downcase) == $vis)
+    | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
   ' "$json_file")
 
   printf '%s\n' "${repos[@]}"
@@ -94,4 +96,19 @@ EOF
   assert_eq "2" "${#slugs[@]}"
   assert_eq "ados-one" "${slugs[0]}"
   assert_eq "ados-three" "${slugs[1]}"
+}
+
+test_parse_repo_jsonl_visibility_filter() {
+  local tmp
+  tmp="$(mktemp)"
+  cat > "$tmp" <<EOF
+{"record_type": "user_repository", "repo_slug": "priv-repo", "visibility": "PRIVATE", "generated_at": "2023-01-01T00:00:00Z"}
+{"record_type": "user_repository", "repo_slug": "pub-repo", "visibility": "PUBLIC", "generated_at": "2023-01-01T00:00:00Z"}
+EOF
+
+  mapfile -t slugs < <(parse_repo_jsonl "$tmp" "*" "private")
+  rm -f "$tmp"
+
+  assert_eq "1" "${#slugs[@]}"
+  assert_eq "priv-repo" "${slugs[0]}"
 }

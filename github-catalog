@@ -71,14 +71,16 @@ case "$COMMAND" in
         --public)  TYPE="public"; shift ;;
         --all)     TYPE="all"; shift ;;
         --refresh) REFRESH=1; shift ;;
-        --parallel) PARALLEL="$2"; shift 2 ;;
+        --parallel) PARALLEL="${2:?--parallel requires a value}"; shift 2 ;;
         *) echo -e "${RED}ERROR: Unknown flag '$1'${NC}" >&2; exit 1 ;;
       esac
     done
 
-    if (( REFRESH == 1 )) && ! command -v gh >/dev/null 2>&1; then
-       echo -e "${RED}ERROR: '--refresh' requires GitHub CLI ('gh') to be installed.${NC}" >&2
-       exit 1
+    if [[ ! -f "$REPO_ROOT/data/$OWNER/user-repositories.jsonl" ]] || (( REFRESH == 1 )); then
+      if ! command -v gh >/dev/null 2>&1; then
+        echo -e "${RED}ERROR: GitHub CLI ('gh') is required for first sync (no cached inventory) or when using --refresh.${NC}" >&2
+        exit 1
+      fi
     fi
 
     ARGS=(

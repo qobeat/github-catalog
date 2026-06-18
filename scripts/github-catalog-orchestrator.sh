@@ -189,11 +189,13 @@ while IFS=$'\t' read -r slug url branch; do
   if (( LIMIT > 0 && count >= LIMIT )); then
     break
   fi
-done < <(jq -rn '
+done < <(jq -rn --arg vis "$VISIBILITY" '
   [inputs | select(.record_type == "user_repository")]
   | group_by(.repo_slug)
   | map(sort_by(.generated_at) | last)
-  | .[] | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
+  | .[]
+  | select($vis == "all" or (.visibility | ascii_downcase) == $vis)
+  | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
 ' "$REPO_LIST_FILE")
 
 ((${#REPOS[@]} > 0)) || fail "no repositories matched glob=$REPOS_GLOB in $REPO_LIST_FILE"
