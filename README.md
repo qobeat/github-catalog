@@ -1,101 +1,55 @@
-# github-catalog
+# **github-catalog**
 
-Standalone Bash/jq/git tool for building an append-only catalog of git repositories without cloning full working trees and without LLM summarization.
+A minimalistic, zero-dependency (Bash/jq/git) CLI tool for building an append-only catalog of git repositories. It extracts semantic documentation (Goals, Objectives, Requirements) and commit history without cloning full working trees and without using LLMs.  
+This project follows strict OSINT and ADLC principles: deterministic execution, verifiable evidence, and strict environment isolation. Read the architecture specification in [docs/ADR-001-github-catalog-rewrite.md](http://docs.google.com/docs/ADR-001-github-catalog-rewrite.md).
 
-This repository implements the rewrite described in [docs/ADR-001-github-catalog-rewrite.md](docs/ADR-001-github-catalog-rewrite.md). 
+## **Prerequisites**
 
-## Prerequisites
+* **Bash 5.0+** (Required for parallel wait \-n job control)  
+* **jq 1.7+** (Required for JSONL stream processing)  
+* **git**  
+* **gh** (Optional: Only required if using \--refresh to fetch inventory lists from GitHub)
 
-- Bash 5.0+ (for `wait -n` in the orchestrator)
-- `jq` 1.7+
-- `git`
-- `gh` (Optional: Only required if generating repo lists via `--refresh-repo-list`)
-- `shellcheck` (Optional: For local linting)
+## **Quickstart**
 
-## Repository layout
+The tool is operated entirely through the github-catalog root executable.
 
-Tracked files:
+### **1\. Sync Repositories**
 
-| Path | Role |
-| --- | --- |
-| `README.md` | This file |
-| `docs/ADR-001-github-catalog-rewrite.md` | Architecture decision record: schemas, sentry algorithm, script design |
-| `docs/github-catalog.schema.json` | JSON Schema for catalog records |
-| `scripts/qobeat-repos.sh` | Convenience wrapper for `qobeat` user execution |
-| `scripts/github-catalog-orchestrator.sh` | Parallel dispatcher with progress bar and run summary |
-| `scripts/github-catalog-datafetcher.sh` | Single-repo sentry check, collection, and JSONL append |
-| `scripts/github-gh.sh` | Isolated `gh` API interface for repo discovery |
-| `tests/lint.sh` | Pure-Bash syntax and ShellCheck runner |
-| `tests/test.sh` | Pure-Bash zero-dependency unit test runner |
-| `MANIFEST.md` | AI Agent instructions for repository interaction |
+Discover and extract data from repositories. The data is appended securely to JSONL ledgers.  
+\# Sync all private repos for user 'qobeat', fetching the latest list from GitHub  
+./github-catalog sync qobeat '\*' \--private \--refresh
 
-Generated at runtime (gitignored):
+\# Sync a specific project quickly (uses local inventory cache, no gh call)  
+./github-catalog sync qobeat 'ados-framework'
 
-| Path | Role |
-| --- | --- |
-| `data/<user-name>/user-repositories.jsonl` | Append-only inventory of discovered repositories |
-| `data/<user-name>/git-projects-catalog.jsonl` | Append-only repository snapshot history |
-| `data/<user-name>/git-projects-commits.jsonl` | Append-only commit records |
-| `logs/github-catalog-YYYY-MM-DD.log` | Timestamped structured run log |
+### **2\. Generate Reports**
 
-## User Wrapper
+Compile the raw JSONL ledgers into a human-readable Markdown report.  
+./github-catalog report qobeat  
+\# Output saved to: reports/qobeat/latest.md
 
-To scan `qobeat` repositories, the easiest method is to use the dedicated wrapper which handles owner assignment automatically:
+## **Data Architecture**
 
-```bash
-./scripts/qobeat-repos.sh '*' --type private --refresh-repo-list
+All output is partitioned by the target owner and isolated from version control (.gitignore applied).  
+data/\<owner\>/  
+  ├── user-repositories.jsonl      \# Discovered inventory (via gh)  
+  ├── git-projects-catalog.jsonl   \# Append-only semantic snapshots  
+  └── git-projects-commits.jsonl   \# Append-only commit history
 
-```
+reports/\<owner\>/  
+  └── latest.md                    \# Generated pure-jq report
 
-The first argument must be the repository mask (glob). All subsequent arguments are passed to the orchestrator.
+### **Schemas**
 
-## Scripts
+The JSONL records adhere strictly to docs/github-catalog.schema.json. You can validate the schema logic using:  
+jq '.' docs/github-catalog.schema.json
 
-### `scripts/github-catalog-orchestrator.sh`
+## **Testing & Development**
 
-Dispatches one datafetcher worker per matched repository with a live progress bar.
+This repository utilizes a custom, pure-Bash testing framework to ensure zero external dependencies (no Python, no BATS).  
+\# Run syntax checks and ShellCheck  
+./github-catalog lint
 
-```bash
-scripts/github-catalog-orchestrator.sh --help
-
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `--user`, `--owner` | Git host owner; URL forms like `https://github.com/qobeat` are accepted |
-| `--repos` | Repository glob, e.g. `*` or `ados-*` |
-| `--type` | `private`, `public`, or `all` |
-| `--refresh-repo-list` | If passed, calls `github-gh.sh` to update `user-repositories.jsonl` |
-| `--parallel` | Max concurrent workers (default: 4) |
-| `--data-dir` | Output directory (defaults to `data/<user-name>/`) |
-
-### `scripts/github-gh.sh`
-
-Isolates all non-standard GitHub platform dependencies. It invokes `gh repo list` and streams the results into `user_repository` JSONL format.
-
-```bash
-scripts/github-gh.sh list-repos --owner qobeat --type private --report-id 123 --data-dir data/qobeat/
-
-```
-
-### `scripts/github-catalog-datafetcher.sh`
-
-Performs sentry checks (`git ls-remote`), bare clone, semantic extraction, commit harvesting, and flock-protected JSONL append for one repository.
-
-## Testing and Linting
-
-This project strictly avoids external testing frameworks (no Python, no BATS).
-
-**1. Run Linters (Syntax & Shellcheck)**
-
-```bash
-./tests/lint.sh
-
-```
-
-**2. Run Unit Tests**
-
-```bash
-./tests/test.sh
-
-```
+\# Run isolated unit tests  
+./github-catalog test  

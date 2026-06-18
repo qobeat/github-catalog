@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# github-catalog - Unified CLI Entrypoint
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+export REPO_ROOT="$SCRIPT_DIR"
+
+# Colors
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+usage() {
+  cat <<EOF
+${CYAN}github-catalog${NC} - Local, append-only Git repository catalog
+
+Usage:
+  ./github-catalog <command> [arguments...]
+
+Commands:
+  sync <owner> [glob]   Fetch and snapshot repositories matching glob (default: '*')
+                        Flags: 
+                          --private, --public, --all (default: all)
+                          --refresh (Force GitHub API list update via gh)
+                          --parallel N (default: 4)
+
+  report <owner>        Generate pure-jq markdown report from JSONL data
+                        Output: reports/<owner>/latest.md
+
+  test                  Run pure-Bash unit tests
+  lint                  Run syntax checks and ShellCheck
+
+Examples:
+  ./github-catalog sync qobeat 'ados-*' --private --refresh
+  ./github-catalog report qobeat
+  ./github-catalog test
+EOF
+}
+
+[[ $# -eq 0 ]] && { usage; exit 1; }
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+  sync)
+    [[ $# -eq 0 ]] && { echo "ERROR: 'sync' requires an <owner> argument."; exit 1; }
+    OWNER="$1"; shift
+    GLOB="*"
+    if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
+      GLOB="$1"; shift
+    fi
+
+    TYPE="all"
+    REFRESH=0
+    PARALLEL=4
+
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --private) TYPE="private"; shift ;;
+        --public)  TYPE="public"; shift ;;
+        --all)     TYPE="all"; shift ;;
+        --refresh) REFRESH=1; shift ;;
+        --parallel) PARALLEL="$2"; shift 2 ;;
+        *) echo "ERROR: Unknown flag '$1'"; exit 1 ;;
+      esac
+    done
+
+    ARGS=(
+      --owner "$OWNER"
+      --repos "$GLOB"
+      --type "$TYPE"
+      --parallel "$PARALLEL"
+    )
+    (( REFRESH == 1 )) && ARGS+=(--refresh-repo-list)
+
+    echo -e "${CYAN}▶ Starting sync for $OWNER ($GLOB) [Type: $TYPE]${NC}"
+    "$REPO_ROOT/scripts/github-catalog-orchestrator.sh" "${ARGS[@]}"
+    ;;
+
+  report)
+    [[ $# -eq 0 ]] && { echo "ERROR: 'report' requires an <owner> argument."; exit 1; }
+    OWNER="$1"
+    echo -e "${CYAN}▶ Generating report for $OWNER...${NC}"
+    "$REPO_ROOT/scripts/github-catalog-report.sh" --owner "$OWNER"
+    ;;
+
+  test)
+    echo -e "${CYAN}▶ Running test suite...${NC}"
+    "$REPO_ROOT/tests/test.sh"
+    ;;
+
+  lint)
+    echo -e "${CYAN}▶ Running linters...${NC}"
+    "$REPO_ROOT/tests/lint.sh"
+    ;;
+
+  *)
+    usage
+    exit 1
+    ;;
+esac
