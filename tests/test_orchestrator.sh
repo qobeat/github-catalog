@@ -17,6 +17,28 @@ match_glob() {
   [[ "$name" == $pattern ]]
 }
 
+glob_has_wildcards() {
+  [[ "$1" == *[\*\?\[]* ]]
+}
+
+build_git_repo_url() {
+  local owner="$1" slug="$2"
+  local host="${GIT_HOST:-github.com}"
+  printf 'git@%s:%s/%s.git' "$host" "$owner" "$slug"
+}
+
+setup_git_ssh() {
+  [[ -z "$SSH_KEY" ]] && return 0
+  export GIT_SSH_COMMAND="ssh -i ${SSH_KEY} -o IdentitiesOnly=yes -o BatchMode=yes"
+}
+
+needs_gh_inventory() {
+  (( REFRESH_REPO_LIST == 1 )) && return 0
+  glob_has_wildcards "$REPOS_GLOB" && return 0
+  [[ -z "$GIT_HOST" ]] && return 0
+  return 1
+}
+
 parse_repo_jsonl() {
   local json_file="$1" glob="$2" visibility="${3:-all}"
   local -a repos=()
@@ -62,6 +84,58 @@ test_match_glob_no_match() {
   if match_glob "other" "ados-*"; then
     return 1
   fi
+}
+
+test_glob_has_wildcards() {
+  glob_has_wildcards "ados-*"
+  glob_has_wildcards "repo?"
+  if glob_has_wildcards "ados-framework"; then
+    return 1
+  fi
+}
+
+test_build_git_repo_url_default() {
+  GIT_HOST=""
+  assert_eq "git@github.com:qobeat/ados-proj.git" \
+    "$(build_git_repo_url "qobeat" "ados-proj")"
+}
+
+test_build_git_repo_url_custom_host() {
+  GIT_HOST="github-personal"
+  assert_eq "git@github-personal:qobeat/ados-proj.git" \
+    "$(build_git_repo_url "qobeat" "ados-proj")"
+  GIT_HOST=""
+}
+
+test_setup_git_ssh() {
+  unset GIT_SSH_COMMAND
+  SSH_KEY=""
+  setup_git_ssh
+  [[ -z "${GIT_SSH_COMMAND:-}" ]]
+
+  SSH_KEY="/tmp/fake-key"
+  setup_git_ssh
+  assert_eq "ssh -i /tmp/fake-key -o IdentitiesOnly=yes -o BatchMode=yes" "$GIT_SSH_COMMAND"
+  unset GIT_SSH_COMMAND SSH_KEY
+}
+
+test_needs_gh_inventory_skips_for_literal_git_host() {
+  REPOS_GLOB="ados-proj"
+  REFRESH_REPO_LIST=0
+  GIT_HOST="github-personal"
+  if needs_gh_inventory; then
+    REPOS_GLOB="" REFRESH_REPO_LIST=0 GIT_HOST=""
+    return 1
+  fi
+  REPOS_GLOB="" REFRESH_REPO_LIST=0 GIT_HOST=""
+}
+
+test_needs_gh_inventory_requires_wildcard() {
+  REPOS_GLOB="ados-*"
+  REFRESH_REPO_LIST=0
+  GIT_HOST="github-personal"
+  needs_gh_inventory || { REPOS_GLOB="" GIT_HOST=""; return 1; }
+  REPOS_GLOB="" GIT_HOST=""
 }
 
 test_parse_repo_jsonl_deduplication() {

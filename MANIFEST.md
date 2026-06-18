@@ -35,13 +35,16 @@ Fetches inventory (when needed) and appends snapshots/commits for matched reposi
 | `--private` | no | — | Only private repos. |
 | `--public` | no | — | Only public repos. |
 | `--all` | no | yes | All visibilities (default). |
-| `--refresh` | no | off | Re-fetch inventory from GitHub via `gh`. |
+| `--refresh` | no | off | Re-fetch inventory from GitHub via `gh` (up to 1000 repos). |
+| `--git-host HOST` | no | `github.com` | SSH config Host alias for git URLs (e.g. `github-personal`). |
+| `--ssh-key PATH` | no | — | Private key for git operations; optional when Host alias sets `IdentityFile`. |
 | `--parallel N` | no | `4` | Max concurrent datafetcher workers. |
 
-`gh` is required when `data/<owner>/user-repositories.jsonl` is missing or `--refresh` is used. Visibility filtering applies to both fresh and cached inventory.
+`gh` is required when prefetching inventory: wildcard globs, `--refresh`, or first sync without `--git-host` on a literal repo name. Wildcard matching applies **only** to prefetched inventory. Literal repo names can be probed via `git ls-remote` when missing from inventory (use `--git-host` for SSH aliases). Optional env: `GITHUB_CATALOG_GIT_HOST`, `GITHUB_CATALOG_SSH_KEY`.
 
 ```bash
-./github-catalog sync qobeat 'ados-*' --private --refresh
+./github-catalog sync qobeat ados-proj --git-host github-personal
+./github-catalog sync qobeat 'ados-*' --git-host github-personal --refresh
 ./github-catalog sync qobeat 'ados-framework'   # uses cache if present
 ```
 

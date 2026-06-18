@@ -30,6 +30,8 @@ Commands:
   sync <owner> [glob]   Fetch and snapshot repositories matching glob (default: '*')
                         Flags: 
                           --private, --public, --all (default: all)
+                          --git-host HOST  SSH config Host alias (e.g. github-personal)
+                          --ssh-key PATH   Private key for git operations (optional)
                           --refresh (Force GitHub API list update via gh)
                           --parallel N (default: 4)
 
@@ -41,10 +43,24 @@ Commands:
   lint                  Run syntax checks and ShellCheck
 
 Examples:
+  ./github-catalog sync qobeat ados-proj --git-host github-personal
+  ./github-catalog sync qobeat 'ados-*' --git-host github-personal --refresh
   ./github-catalog sync qobeat 'ados-*' --private --refresh
   ./github-catalog report qobeat
   ./github-catalog clean qobeat
 EOF
+}
+
+glob_has_wildcards() {
+  [[ "$1" == *[\*\?\[]* ]]
+}
+
+sync_needs_gh() {
+  local owner="$1" glob="$2" refresh="$3" git_host="$4"
+  (( refresh == 1 )) && return 0
+  glob_has_wildcards "$glob" && return 0
+  [[ -z "$git_host" ]] && return 0
+  return 1
 }
 
 [[ $# -eq 0 ]] && { usage; exit 1; }
@@ -64,22 +80,29 @@ case "$COMMAND" in
     TYPE="all"
     REFRESH=0
     PARALLEL=4
+    GIT_HOST="${GITHUB_CATALOG_GIT_HOST:-}"
+    SSH_KEY="${GITHUB_CATALOG_SSH_KEY:-}"
 
     while [[ $# -gt 0 ]]; do
       case "$1" in
         --private) TYPE="private"; shift ;;
         --public)  TYPE="public"; shift ;;
         --all)     TYPE="all"; shift ;;
+        --git-host) GIT_HOST="${2:?--git-host requires a value}"; shift 2 ;;
+        --ssh-key)  SSH_KEY="${2:?--ssh-key requires a value}"; shift 2 ;;
         --refresh) REFRESH=1; shift ;;
         --parallel) PARALLEL="${2:?--parallel requires a value}"; shift 2 ;;
         *) echo -e "${RED}ERROR: Unknown flag '$1'${NC}" >&2; exit 1 ;;
       esac
     done
 
-    if [[ ! -f "$REPO_ROOT/data/$OWNER/user-repositories.jsonl" ]] || (( REFRESH == 1 )); then
-      if ! command -v gh >/dev/null 2>&1; then
-        echo -e "${RED}ERROR: GitHub CLI ('gh') is required for first sync (no cached inventory) or when using --refresh.${NC}" >&2
-        exit 1
+    INVENTORY_FILE="$REPO_ROOT/data/$OWNER/user-repositories.jsonl"
+    if sync_needs_gh "$OWNER" "$GLOB" "$REFRESH" "$GIT_HOST"; then
+      if [[ ! -f "$INVENTORY_FILE" ]] || (( REFRESH == 1 )); then
+        if ! command -v gh >/dev/null 2>&1; then
+          echo -e "${RED}ERROR: GitHub CLI ('gh') is required to prefetch inventory (wildcard glob, --refresh, or first sync without --git-host).${NC}" >&2
+          exit 1
+        fi
       fi
     fi
 
@@ -90,6 +113,8 @@ case "$COMMAND" in
       --parallel "$PARALLEL"
     )
     (( REFRESH == 1 )) && ARGS+=(--refresh-repo-list)
+    [[ -n "$GIT_HOST" ]] && ARGS+=(--git-host "$GIT_HOST")
+    [[ -n "$SSH_KEY" ]] && ARGS+=(--ssh-key "$SSH_KEY")
 
     echo -e "${CYAN}▶ Starting sync for $OWNER ($GLOB) [Type: $TYPE]${NC}"
     "$REPO_ROOT/scripts/github-catalog-orchestrator.sh" "${ARGS[@]}"

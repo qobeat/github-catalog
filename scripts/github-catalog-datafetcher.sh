@@ -14,6 +14,8 @@ Required:
 
 Options:
   --repo-url URL            Full clone URL (SSH, HTTPS, or file://)
+  --git-host HOST           SSH config Host alias (default: github.com)
+  --ssh-key PATH            Private key for git operations (optional)
   --branch NAME             Default branch (default: main)
   --data-dir DIR            JSONL output directory (default: data/<owner>)
   --log-file PATH           Structured run log file
@@ -162,6 +164,11 @@ commit_already_recorded() {
     "$COMMITS_JSONL" 2>/dev/null | grep -qx true
 }
 
+setup_git_ssh() {
+  [[ -z "$SSH_KEY" ]] && return 0
+  export GIT_SSH_COMMAND="ssh -i ${SSH_KEY} -o IdentitiesOnly=yes -o BatchMode=yes"
+}
+
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
@@ -170,6 +177,8 @@ REPO_SLUG=""
 VISIBILITY=""
 REPORT_ID=""
 REPO_URL=""
+GIT_HOST="${GITHUB_CATALOG_GIT_HOST:-}"
+SSH_KEY="${GITHUB_CATALOG_SSH_KEY:-}"
 BRANCH="main"
 DATA_DIR="$REPO_ROOT/data"
 LOG_FILE=""
@@ -181,6 +190,8 @@ while [[ $# -gt 0 ]]; do
     --type)         VISIBILITY="${2:?}"; shift 2 ;;
     --report-id)    REPORT_ID="${2:?}"; shift 2 ;;
     --repo-url)     REPO_URL="${2:?}"; shift 2 ;;
+    --git-host)     GIT_HOST="${2:?}"; shift 2 ;;
+    --ssh-key)      SSH_KEY="${2:?}"; shift 2 ;;
     --branch)       BRANCH="${2:?}"; shift 2 ;;
     --data-dir)     DATA_DIR="${2:?}"; shift 2 ;;
     --log-file)     LOG_FILE="${2:?}"; shift 2 ;;
@@ -209,8 +220,10 @@ CATALOG_JSONL="$DATA_DIR/git-projects-catalog.jsonl"
 COMMITS_JSONL="$DATA_DIR/git-projects-commits.jsonl"
 
 if [[ -z "$REPO_URL" ]]; then
-  REPO_URL="git@github.com:${OWNER}/${REPO_SLUG}.git"
+  REPO_URL="git@${GIT_HOST:-github.com}:${OWNER}/${REPO_SLUG}.git"
 fi
+
+setup_git_ssh
 
 log_info "START repo=$REPO_SLUG owner=$OWNER branch=$BRANCH report_id=$REPORT_ID visibility=$VISIBILITY"
 
