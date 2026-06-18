@@ -53,7 +53,7 @@ gh auth login
 
 # 3. Read the markdown summary
 ./github-catalog report qobeat
-# → reports/qobeat/latest.md
+# → reports/qobeat/report-<timestamp>.md (latest.md symlink points to newest)
 ```
 
 **Second run** — reuse cached inventory; only repos with new commits are re-collected (sentry skip):
@@ -140,7 +140,7 @@ Operate exclusively through the root executable:
 | `--private` | no | — | Restrict to private repositories. Mutually exclusive with `--public`; overrides default `--all`. |
 | `--public` | no | — | Restrict to public repositories. |
 | `--all` | no | yes | Include repositories of any visibility (default when neither `--private` nor `--public` is set). |
-| `--refresh` | no | off | Force a fresh inventory fetch from GitHub via `gh` (appends to `user-repositories.jsonl`, up to 1000 repos). |
+| `--refresh` | no | off | Force a fresh inventory fetch from GitHub via `gh` (appends to `user-repositories.jsonl`, up to 1000 repos). Repos removed from GitHub within the same visibility scope are tombstoned with `status: deleted`. |
 | `--git-host HOST` | no | `github.com` | SSH config Host alias for git clone URLs (e.g. `github-personal` from `~/.ssh/config`). |
 | `--ssh-key PATH` | no | — | Private key for git operations; optional when the Host alias already sets `IdentityFile`. |
 | `--parallel N` | no | `4` | Maximum concurrent repository workers. |
@@ -184,7 +184,7 @@ Operate exclusively through the root executable:
 |----------|----------|-------------|
 | `<owner>` | yes | Owner whose catalog to report on. |
 
-Reads `data/<owner>/git-projects-catalog.jsonl` and writes `reports/<owner>/latest.md`.
+Reads `data/<owner>/git-projects-catalog.jsonl` and writes a timestamped report under `reports/<owner>/report-<timestamp>.md`. Updates `reports/<owner>/latest.md` as a symlink to the newest report.
 
 ```bash
 ./github-catalog report qobeat
@@ -230,12 +230,13 @@ All output is partitioned by the target owner and isolated from version control 
 
 ```
 data/<owner>/
-  ├── user-repositories.jsonl      # Discovered inventory (via gh, append-only)
-  ├── git-projects-catalog.jsonl   # Append-only semantic snapshots
-  └── git-projects-commits.jsonl     # Append-only commit history
+  ├── user-repositories.jsonl      # Discovered inventory (via gh, append-only; status: active|deleted)
+  ├── git-projects-catalog.jsonl   # Append-only semantic snapshots (status: active|deleted)
+  └── git-projects-commits.jsonl     # Append-only commit history (immutable; status on new lines)
 
 reports/<owner>/
-  └── latest.md                    # Generated pure-jq report
+  ├── report-YYYY-MM-DDTHH-MM-SSZ.md   # Versioned markdown reports (never overwritten)
+  └── latest.md                        # Symlink to the most recent report
 
 logs/
   └── github-catalog-<date>.log    # Structured run log

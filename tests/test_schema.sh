@@ -16,6 +16,16 @@ validate_repo_snapshot() {
     and (.head_commit_sha | test("^[0-9a-f]{40}$"))
     and (.key_files_present | type == "array")
     and (.errors | type == "array")
+    and ((.status // "active") | IN("active", "deleted"))
+  ' <<< "$line" >/dev/null
+}
+
+validate_user_repository() {
+  local line="$1"
+  jq -e '
+    .record_type == "user_repository"
+    and (.repo_slug | length > 0)
+    and (.status | IN("active", "deleted"))
   ' <<< "$line" >/dev/null
 }
 
@@ -27,6 +37,7 @@ validate_commit() {
     and (.short_sha | length == 7)
     and (.message | type == "string")
     and (.files_changed | type == "number")
+    and ((.status // "active") | IN("active", "deleted"))
   ' <<< "$line" >/dev/null
 }
 
@@ -42,6 +53,42 @@ validate_run() {
     and (.parallel | type == "number" and . >= 1)
   ' <<< "$line" >/dev/null
 }
+
+FIXTURE_USER_REPOSITORY='{
+  "schema_version": "1.2.0",
+  "record_type": "user_repository",
+  "report_id": "2026-06-17T12:00:00Z",
+  "generated_at": "2026-06-17T12:00:02Z",
+  "owner": "testowner",
+  "repo_slug": "fake-remote",
+  "repo_url": "https://github.com/testowner/fake-remote",
+  "visibility": "private",
+  "default_branch": "main",
+  "status": "active"
+}'
+
+FIXTURE_SNAPSHOT_V12='{
+  "schema_version": "1.2.0",
+  "record_type": "repo_snapshot",
+  "report_id": "2026-06-17T12:00:00Z",
+  "generated_at": "2026-06-17T12:00:04Z",
+  "collection_skipped": false,
+  "status": "active",
+  "owner": "testowner",
+  "repo_slug": "fake-remote",
+  "repo_url": "file:///tmp/fake.git",
+  "default_branch": "main",
+  "head_commit_sha": "a3f8c21d9e4b07625f1c3a8d0e7b92641fd5c8e1",
+  "head_commit_at": "2026-06-16T22:14:07Z",
+  "git_description": null,
+  "created_at": "2023-11-01T09:30:00Z",
+  "key_files_present": ["README.md"],
+  "goal": {"text": "A goal", "source_file": "README.md", "source_heading": "GOAL"},
+  "objectives": null,
+  "flows": null,
+  "requirements": null,
+  "errors": []
+}'
 
 FIXTURE_SNAPSHOT='{
   "schema_version": "1.0.0",
@@ -66,10 +113,11 @@ FIXTURE_SNAPSHOT='{
 }'
 
 FIXTURE_COMMIT='{
-  "schema_version": "1.0.0",
+  "schema_version": "1.2.0",
   "record_type": "commit",
   "report_id": "2026-06-17T12:00:00Z",
   "generated_at": "2026-06-17T12:00:06Z",
+  "status": "active",
   "owner": "testowner",
   "repo_slug": "fake-remote",
   "repo_url": "file:///tmp/fake.git",
@@ -99,6 +147,20 @@ FIXTURE_RUN='{
 
 test_schema_repo_snapshot_valid() {
   validate_repo_snapshot "$FIXTURE_SNAPSHOT"
+}
+
+test_schema_repo_snapshot_v12_valid() {
+  validate_repo_snapshot "$FIXTURE_SNAPSHOT_V12"
+}
+
+test_schema_user_repository_valid() {
+  validate_user_repository "$FIXTURE_USER_REPOSITORY"
+}
+
+test_schema_user_repository_deleted_valid() {
+  local deleted
+  deleted=$(jq -c '.status = "deleted"' <<< "$FIXTURE_USER_REPOSITORY")
+  validate_user_repository "$deleted"
 }
 
 test_schema_commit_valid() {

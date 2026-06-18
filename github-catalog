@@ -27,6 +27,10 @@ Usage:
   ./github-catalog <command> [arguments...]
 
 Commands:
+  refresh <target>      Refresh inventory only (no catalog collection)
+                        Target: <owner> or <owner>/<repo>
+                        Flags: --private, --public, --all (default: all)
+
   sync <owner> [glob]   Fetch and snapshot repositories matching glob (default: '*')
                         Flags: 
                           --private, --public, --all (default: all)
@@ -36,13 +40,16 @@ Commands:
                           --parallel N (default: 4)
 
   report <owner>        Generate pure-jq markdown report from JSONL data
-                        Output: reports/<owner>/latest.md
+                        Output: reports/<owner>/report-<timestamp>.md
+                        Symlink: reports/<owner>/latest.md → newest report
 
   clean <owner|all>     Wipe cached data, reports, and logs for an owner (or 'all')
   test                  Run pure-Bash unit tests
   lint                  Run syntax checks and ShellCheck
 
 Examples:
+  ./github-catalog refresh qobeat
+  ./github-catalog refresh qobeat/ados-proj --public
   ./github-catalog sync qobeat ados-proj --git-host github-personal
   ./github-catalog sync qobeat 'ados-*' --git-host github-personal --refresh
   ./github-catalog sync qobeat 'ados-*' --private --refresh
@@ -69,6 +76,26 @@ COMMAND="$1"
 shift
 
 case "$COMMAND" in
+  refresh)
+    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'refresh' requires a <owner> or <owner>/<repo> target.${NC}" >&2; exit 1; }
+    TARGET="$1"; shift
+    TYPE="all"
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --private) TYPE="private"; shift ;;
+        --public)  TYPE="public"; shift ;;
+        --all)     TYPE="all"; shift ;;
+        *) echo -e "${RED}ERROR: Unknown flag '$1'${NC}" >&2; exit 1 ;;
+      esac
+    done
+    if ! command -v gh >/dev/null 2>&1; then
+      echo -e "${RED}ERROR: GitHub CLI ('gh') is required to refresh inventory.${NC}" >&2
+      exit 1
+    fi
+    echo -e "${CYAN}▶ Refreshing inventory for $TARGET [Type: $TYPE]${NC}"
+    "$REPO_ROOT/scripts/github-catalog-refresh.sh" --target "$TARGET" --type "$TYPE"
+    ;;
+
   sync)
     [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'sync' requires an <owner> argument.${NC}" >&2; exit 1; }
     OWNER="$1"; shift

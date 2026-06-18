@@ -19,6 +19,7 @@ Options:
   --branch NAME             Default branch (default: main)
   --data-dir DIR            JSONL output directory (default: data/<owner>)
   --log-file PATH           Structured run log file
+  --tombstone               Write deleted repo_snapshot from prior data (no git calls)
   -h, --help                Show this help
 
 EOF
@@ -61,9 +62,23 @@ append_commit() {
 
 write_error_record() {
   local err_msg="${1:-unreachable}"
+  local inv_status="active"
+  local inventory_file="$DATA_DIR/user-repositories.jsonl"
+  if [[ -f "$inventory_file" ]]; then
+    inv_status=$(jq -rn --arg slug "$REPO_SLUG" \
+      '[inputs | select(.record_type == "user_repository" and .repo_slug == $slug)]
+       | sort_by(.generated_at) | last | .status // "active"' \
+      "$inventory_file" 2>/dev/null || echo active)
+  fi
+
+  if [[ "$inv_status" == "deleted" ]]; then
+    write_deleted_record
+    return
+  fi
+
   local record
   record=$(jq -nc \
-    --arg sv "1.0.0" \
+    --arg sv "1.2.0" \
     --arg rid "$REPORT_ID" \
     --arg gat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg own "$OWNER" \
@@ -77,6 +92,7 @@ write_error_record() {
       report_id: $rid,
       generated_at: $gat,
       collection_skipped: false,
+      status: "active",
       owner: $own,
       repo_slug: $slug,
       repo_url: $url,
@@ -92,6 +108,66 @@ write_error_record() {
       requirements: null,
       errors: [$err]
     }')
+  append_catalog "$record"
+}
+
+write_deleted_record() {
+  local last_record
+  last_record=$(jq -rn --arg slug "$REPO_SLUG" \
+    '[inputs | select(.record_type == "repo_snapshot" and .repo_slug == $slug and .collection_skipped == false)]
+     | last // empty' \
+    "$CATALOG_JSONL" 2>/dev/null || true)
+  if [[ -z "$last_record" ]]; then
+    last_record=$(jq -rn --arg slug "$REPO_SLUG" \
+      '[inputs | select(.record_type == "repo_snapshot" and .repo_slug == $slug)] | last // empty' \
+      "$CATALOG_JSONL" 2>/dev/null || true)
+  fi
+
+  local record
+  if [[ -n "$last_record" && "$last_record" != "null" ]]; then
+    record=$(jq -c \
+      --arg rid "$REPORT_ID" \
+      --arg gat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      '. + {
+        schema_version: "1.2.0",
+        report_id: $rid,
+        generated_at: $gat,
+        collection_skipped: false,
+        status: "deleted",
+        errors: []
+      }' <<< "$last_record")
+  else
+    record=$(jq -nc \
+      --arg sv "1.2.0" \
+      --arg rid "$REPORT_ID" \
+      --arg gat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      --arg own "$OWNER" \
+      --arg slug "$REPO_SLUG" \
+      --arg url "$REPO_URL" \
+      --arg br "$BRANCH" \
+      '{
+        schema_version: $sv,
+        record_type: "repo_snapshot",
+        report_id: $rid,
+        generated_at: $gat,
+        collection_skipped: false,
+        status: "deleted",
+        owner: $own,
+        repo_slug: $slug,
+        repo_url: $url,
+        default_branch: $br,
+        head_commit_sha: "0000000000000000000000000000000000000000",
+        head_commit_at: null,
+        git_description: null,
+        created_at: null,
+        key_files_present: [],
+        goal: null,
+        objectives: null,
+        flows: null,
+        requirements: null,
+        errors: []
+      }')
+  fi
   append_catalog "$record"
 }
 
@@ -114,9 +190,11 @@ write_skip_record() {
     --arg gat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg sha "$REMOTE_SHA" \
     '. + {
+      schema_version: "1.2.0",
       report_id: $rid,
       generated_at: $gat,
       collection_skipped: true,
+      status: (.status // "active"),
       head_commit_sha: $sha,
       errors: []
     }' <<< "$last_record")
@@ -182,6 +260,7 @@ SSH_KEY="${GITHUB_CATALOG_SSH_KEY:-}"
 BRANCH="main"
 DATA_DIR="$REPO_ROOT/data"
 LOG_FILE=""
+TOMBSTONE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -195,6 +274,7 @@ while [[ $# -gt 0 ]]; do
     --branch)       BRANCH="${2:?}"; shift 2 ;;
     --data-dir)     DATA_DIR="${2:?}"; shift 2 ;;
     --log-file)     LOG_FILE="${2:?}"; shift 2 ;;
+    --tombstone)    TOMBSTONE=1; shift 1 ;;
     -h|--help)      usage; exit 0 ;;
     *)              fail "unknown option: $1" ;;
   esac
@@ -226,6 +306,12 @@ fi
 setup_git_ssh
 
 log_info "START repo=$REPO_SLUG owner=$OWNER branch=$BRANCH report_id=$REPORT_ID visibility=$VISIBILITY"
+
+if (( TOMBSTONE == 1 )); then
+  log_info "TOMBSTONE repo=$REPO_SLUG"
+  write_deleted_record
+  exit 0
+fi
 
 # --- STEP 1: Resolve remote HEAD SHA ---
 cmd="git ls-remote $REPO_URL refs/heads/$BRANCH"
@@ -335,7 +421,7 @@ while IFS= read -r commit_sha; do
   short_sha="${commit_sha:0:7}"
 
   commit_record=$(jq -nc \
-    --arg sv "1.0.0" \
+    --arg sv "1.2.0" \
     --arg rid "$REPORT_ID" \
     --arg gat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg own "$OWNER" \
@@ -354,6 +440,7 @@ while IFS= read -r commit_sha; do
       record_type: "commit",
       report_id: $rid,
       generated_at: $gat,
+      status: "active",
       owner: $own,
       repo_slug: $slug,
       repo_url: $url,
@@ -378,7 +465,7 @@ if [[ -z "$HEAD_COMMIT_AT" ]]; then head_at_arg=null; else head_at_arg="$HEAD_CO
 if [[ -z "$CREATED_AT" ]]; then created_arg=null; else created_arg="$CREATED_AT"; fi
 
 record=$(jq -nc \
-  --arg sv "1.0.0" \
+  --arg sv "1.2.0" \
   --arg rid "$REPORT_ID" \
   --arg gat "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   --arg own "$OWNER" \
@@ -400,6 +487,7 @@ record=$(jq -nc \
     report_id: $rid,
     generated_at: $gat,
     collection_skipped: false,
+    status: "active",
     owner: $own,
     repo_slug: $slug,
     repo_url: $url,

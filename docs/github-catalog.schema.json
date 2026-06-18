@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "github-catalog/schema/1.1.0",
+  "$id": "github-catalog/schema/1.2.0",
   "title": "GitHub Catalog JSONL Record Schema",
   "description": "Schema for append-only JSONL streams. Each line is one JSON object matching repo_snapshot, commit, run, or user_repository.",
   "oneOf": [
@@ -18,6 +18,11 @@
     "sha40": {
       "type": "string",
       "pattern": "^[0-9a-f]{40}$"
+    },
+    "repo_status": {
+      "type": "string",
+      "enum": ["active", "deleted"],
+      "description": "Repository lifecycle status; omitted on legacy records (treated as active)"
     },
     "extracted_field": {
       "type": "object",
@@ -44,7 +49,7 @@
       "type": "object",
       "required": [
         "schema_version", "record_type", "report_id", "generated_at",
-        "owner", "repo_slug", "repo_url", "visibility", "default_branch"
+        "owner", "repo_slug", "repo_url", "visibility", "default_branch", "status"
       ],
       "additionalProperties": false,
       "properties": {
@@ -56,7 +61,8 @@
         "repo_slug":      { "type": "string" },
         "repo_url":       { "type": "string" },
         "visibility":     { "type": "string" },
-        "default_branch": { "type": "string" }
+        "default_branch": { "type": "string" },
+        "status":         { "$ref": "#/$defs/repo_status" }
       }
     },
     "repo_snapshot": {
@@ -64,7 +70,7 @@
       "type": "object",
       "required": [
         "collection_skipped", "owner", "repo_slug", "repo_url",
-        "default_branch", "head_commit_sha", "key_files_present", "errors"
+        "default_branch", "head_commit_sha", "key_files_present", "errors", "status"
       ],
       "properties": {
         "schema_version":   { "type": "string" },
@@ -72,6 +78,7 @@
         "report_id":        { "$ref": "#/$defs/iso_datetime" },
         "generated_at":     { "$ref": "#/$defs/iso_datetime" },
         "collection_skipped": { "type": "boolean" },
+        "status":           { "$ref": "#/$defs/repo_status" },
         "owner":            { "type": "string" },
         "repo_slug":        { "type": "string" },
         "repo_url":         { "type": "string" },
@@ -110,7 +117,8 @@
         "author_name":    { "type": ["string", "null"] },
         "author_email":   { "type": ["string", "null"] },
         "message":        { "type": "string" },
-        "files_changed":  { "type": "integer" }
+        "files_changed":  { "type": "integer" },
+        "status":         { "$ref": "#/$defs/repo_status" }
       }
     },
     "run": {

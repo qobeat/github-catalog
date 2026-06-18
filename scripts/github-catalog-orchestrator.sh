@@ -137,6 +137,7 @@ fail_no_repos_matched() {
       | group_by(.repo_slug)
       | map(sort_by(.generated_at) | last)
       | map(select($vis == "all" or (.visibility | ascii_downcase) == $vis))
+      | map(select((.status // "active") == "active"))
       | length
     ' "$REPO_LIST_FILE" 2>/dev/null || echo 0)
   fi
@@ -262,12 +263,30 @@ setup_git_ssh
 if needs_gh_inventory; then
   if [[ ! -f "$REPO_LIST_FILE" ]] || (( REFRESH_REPO_LIST == 1 )); then
     log_info "Refreshing repository list via github-gh.sh..."
+    TOMBSTONES_FILE="$(mktemp)"
     "$GH_HELPER" list-repos \
       --owner "$OWNER" \
       --type "$VISIBILITY" \
       --report-id "$REPORT_ID" \
       --data-dir "$DATA_DIR" \
-      --limit 1000
+      --limit 1000 \
+      --tombstones-file "$TOMBSTONES_FILE"
+
+    if [[ -s "$TOMBSTONES_FILE" ]]; then
+      while IFS= read -r deleted_slug; do
+        [[ -n "$deleted_slug" ]] || continue
+        log_info "CATALOG_TOMBSTONE repo=$deleted_slug"
+        "$FETCHER" \
+          --owner "$OWNER" \
+          --repo "$deleted_slug" \
+          --type "$VISIBILITY" \
+          --report-id "$REPORT_ID" \
+          --data-dir "$DATA_DIR" \
+          --log-file "$LOG_FILE" \
+          --tombstone 2>>"$LOG_FILE" || true
+      done < "$TOMBSTONES_FILE"
+    fi
+    rm -f "$TOMBSTONES_FILE"
   fi
   [[ -f "$REPO_LIST_FILE" ]] || fail "Repo list file not found and could not be generated: $REPO_LIST_FILE"
 elif [[ ! -f "$REPO_LIST_FILE" ]]; then
@@ -300,6 +319,7 @@ if [[ -f "$REPO_LIST_FILE" ]]; then
     | map(sort_by(.generated_at) | last)
     | .[]
     | select($vis == "all" or (.visibility | ascii_downcase) == $vis)
+    | select((.status // "active") == "active")
     | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
   ' "$REPO_LIST_FILE")
 fi

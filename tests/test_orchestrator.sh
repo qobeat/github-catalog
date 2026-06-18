@@ -54,6 +54,7 @@ parse_repo_jsonl() {
     | map(sort_by(.generated_at) | last)
     | .[]
     | select($vis == "all" or (.visibility | ascii_downcase) == $vis)
+    | select((.status // "active") == "active")
     | [ .repo_slug, (.repo_url // ""), (.default_branch // "") ] | @tsv
   ' "$json_file")
 
@@ -185,4 +186,19 @@ EOF
 
   assert_eq "1" "${#slugs[@]}"
   assert_eq "priv-repo" "${slugs[0]}"
+}
+
+test_parse_repo_jsonl_excludes_deleted() {
+  local tmp
+  tmp="$(mktemp)"
+  cat > "$tmp" <<EOF
+{"record_type": "user_repository", "repo_slug": "active-repo", "visibility": "public", "generated_at": "2023-01-01T00:00:00Z", "status": "active"}
+{"record_type": "user_repository", "repo_slug": "gone-repo", "visibility": "public", "generated_at": "2023-01-02T00:00:00Z", "status": "deleted"}
+EOF
+
+  mapfile -t slugs < <(parse_repo_jsonl "$tmp" "*")
+  rm -f "$tmp"
+
+  assert_eq "1" "${#slugs[@]}"
+  assert_eq "active-repo" "${slugs[0]}"
 }

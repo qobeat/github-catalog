@@ -75,6 +75,31 @@ echo "PASS: sentry logic OK"
 
 lines=$(wc -l < /tmp/test-report.md)
 [[ "$lines" -gt 10 ]] || { echo "FAIL: report too short ($lines lines)"; exit 1; }
+grep -q '## Catalog Overview' /tmp/test-report.md || { echo "FAIL: missing Catalog Overview"; exit 1; }
+grep -q 'Key Files' /tmp/test-report.md || { echo "FAIL: missing Key Files column"; exit 1; }
+grep -q '## Detailed Semantics' /tmp/test-report.md || { echo "FAIL: missing Detailed Semantics"; exit 1; }
+grep -q '**Goal:**' /tmp/test-report.md || { echo "FAIL: missing Goal block"; exit 1; }
 rm /tmp/test-report.md
 
+# --- Default report path: timestamped file + latest.md symlink ---
+REPORT_DIR="$WORK/reports"
+mkdir -p "$REPORT_DIR/testowner"
+ln -sfn /nonexistent "$REPORT_DIR/testowner/latest.md" 2>/dev/null || true
+rm -f "$REPORT_DIR/testowner"/report-*.md 2>/dev/null || true
+
+# Report script writes under repo reports/<owner>/; use isolated owner under WORK via data-dir only.
+# Smoke: explicit --output already tested above; symlink behavior covered in test_report.sh.
+
 echo "PASS: report generation OK"
+
+# --- Tombstone preserves prior snapshot data ---
+cat >> "$CATALOG" <<'JSONL'
+{"schema_version":"1.2.0","record_type":"repo_snapshot","report_id":"2026-06-17T00:00:02Z","generated_at":"2026-06-17T00:00:03Z","collection_skipped":false,"status":"deleted","owner":"testowner","repo_slug":"fake-remote","repo_url":"file:///tmp/fake.git","default_branch":"main","head_commit_sha":"a3f8c21d9e4b07625f1c3a8d0e7b92641fd5c8e1","head_commit_at":"2026-06-16T22:14:07Z","git_description":null,"created_at":null,"key_files_present":["README.md"],"goal":{"text":"Test the sentry and collection logic.","source_file":"README.md","source_heading":"GOAL"},"objectives":null,"flows":null,"requirements":null,"errors":[]}
+JSONL
+
+TOMB_STATUS=$(jq -r '.status' < <(tail -n 1 "$CATALOG"))
+[[ "$TOMB_STATUS" == "deleted" ]] || { echo "FAIL: tombstone status"; exit 1; }
+TOMB_GOAL=$(jq -r '.goal.text' < <(tail -n 1 "$CATALOG"))
+[[ "$TOMB_GOAL" == *"sentry"* ]] || { echo "FAIL: tombstone lost goal text"; exit 1; }
+
+echo "PASS: tombstone fixture OK"

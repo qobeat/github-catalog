@@ -58,7 +58,7 @@ Generates a markdown summary from local JSONL.
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `<owner>` | yes | Owner to report on. Output: `reports/<owner>/latest.md`. |
+| `<owner>` | yes | Owner to report on. Output: `reports/<owner>/report-<timestamp>.md`; `latest.md` symlink updated. |
 
 ```bash
 ./github-catalog report qobeat
