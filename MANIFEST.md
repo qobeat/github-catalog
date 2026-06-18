@@ -5,7 +5,7 @@ This project is an **Agent Development Lifecycle (ADLC)** compatible tool. It im
 
 ## **1\. Core Directives & Constraints**
 
-* **Architecture Reference:** You MUST adhere to docs/ADR-001-github-catalog-rewrite.md.  
+* **Architecture Reference:** You MUST adhere to docs/ADR-001-github-catalog-rewrite.md and docs/ADR-002.md.  
 * **Zero Core Dependencies:** The engine is strictly restricted to Bash 5.0+, jq 1.7+, and standard git.  
   * **DO NOT** introduce Python, Node.js, BATS, or external APIs to the core execution logic.  
 * **The API Bridge:** The gh CLI is *only* permitted inside scripts/github-gh.sh to fetch remote inventory lists. No other script may call gh or network APIs.  

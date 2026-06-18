@@ -1,7 +1,7 @@
 # **github-catalog**
 
 A minimalistic, zero-dependency (Bash/jq/git) CLI tool for building an append-only catalog of git repositories. It extracts semantic documentation (Goals, Objectives, Requirements) and commit history without cloning full working trees and without using LLMs.  
-This project follows strict OSINT and ADLC principles: deterministic execution, verifiable evidence, and strict environment isolation. Read the architecture specification in [docs/ADR-001-github-catalog-rewrite.md](http://docs.google.com/docs/ADR-001-github-catalog-rewrite.md).
+This project follows strict OSINT and ADLC principles: deterministic execution, verifiable evidence, and strict environment isolation. Read the architecture specification in docs/ADR-001-github-catalog-rewrite.md
 
 ## **Prerequisites**
 

@@ -7,7 +7,17 @@ export REPO_ROOT="$SCRIPT_DIR"
 
 # Colors
 CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
 NC='\033[0m'
+
+# Dependency Checks
+for cmd in jq git; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo -e "${RED}ERROR: Required command '$cmd' is not installed.${NC}" >&2
+    exit 1
+  fi
+done
 
 usage() {
   cat <<EOF
@@ -26,13 +36,14 @@ Commands:
   report <owner>        Generate pure-jq markdown report from JSONL data
                         Output: reports/<owner>/latest.md
 
+  clean <owner|all>     Wipe cached data, reports, and logs for an owner (or 'all')
   test                  Run pure-Bash unit tests
   lint                  Run syntax checks and ShellCheck
 
 Examples:
   ./github-catalog sync qobeat 'ados-*' --private --refresh
   ./github-catalog report qobeat
-  ./github-catalog test
+  ./github-catalog clean qobeat
 EOF
 }
 
@@ -43,7 +54,7 @@ shift
 
 case "$COMMAND" in
   sync)
-    [[ $# -eq 0 ]] && { echo "ERROR: 'sync' requires an <owner> argument."; exit 1; }
+    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'sync' requires an <owner> argument.${NC}" >&2; exit 1; }
     OWNER="$1"; shift
     GLOB="*"
     if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
@@ -61,9 +72,14 @@ case "$COMMAND" in
         --all)     TYPE="all"; shift ;;
         --refresh) REFRESH=1; shift ;;
         --parallel) PARALLEL="$2"; shift 2 ;;
-        *) echo "ERROR: Unknown flag '$1'"; exit 1 ;;
+        *) echo -e "${RED}ERROR: Unknown flag '$1'${NC}" >&2; exit 1 ;;
       esac
     done
+
+    if (( REFRESH == 1 )) && ! command -v gh >/dev/null 2>&1; then
+       echo -e "${RED}ERROR: '--refresh' requires GitHub CLI ('gh') to be installed.${NC}" >&2
+       exit 1
+    fi
 
     ARGS=(
       --owner "$OWNER"
@@ -78,10 +94,22 @@ case "$COMMAND" in
     ;;
 
   report)
-    [[ $# -eq 0 ]] && { echo "ERROR: 'report' requires an <owner> argument."; exit 1; }
+    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'report' requires an <owner> argument.${NC}" >&2; exit 1; }
     OWNER="$1"
     echo -e "${CYAN}▶ Generating report for $OWNER...${NC}"
     "$REPO_ROOT/scripts/github-catalog-report.sh" --owner "$OWNER"
+    ;;
+
+  clean)
+    [[ $# -eq 0 ]] && { echo -e "${RED}ERROR: 'clean' requires an <owner> argument or 'all'.${NC}" >&2; exit 1; }
+    TARGET="$1"
+    if [[ "$TARGET" == "all" ]]; then
+      rm -rf "$REPO_ROOT/data/"* "$REPO_ROOT/reports/"* "$REPO_ROOT/logs/"*
+      echo -e "${GREEN}✓ Cleaned all data, reports, and logs.${NC}"
+    else
+      rm -rf "$REPO_ROOT/data/$TARGET" "$REPO_ROOT/reports/$TARGET"
+      echo -e "${GREEN}✓ Cleaned data and reports for owner: $TARGET${NC}"
+    fi
     ;;
 
   test)
