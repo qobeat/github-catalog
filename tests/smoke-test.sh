@@ -78,7 +78,7 @@ lines=$(wc -l < /tmp/test-report.md)
 grep -q '## Catalog Overview' /tmp/test-report.md || { echo "FAIL: missing Catalog Overview"; exit 1; }
 grep -q 'Key Files' /tmp/test-report.md || { echo "FAIL: missing Key Files column"; exit 1; }
 grep -q '## Detailed Semantics' /tmp/test-report.md || { echo "FAIL: missing Detailed Semantics"; exit 1; }
-grep -q '**Goal:**' /tmp/test-report.md || { echo "FAIL: missing Goal block"; exit 1; }
+grep -Fq '**Goal:**' /tmp/test-report.md || { echo "FAIL: missing Goal block"; exit 1; }
 rm /tmp/test-report.md
 
 # --- Default report path: timestamped file + latest.md symlink ---

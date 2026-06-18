@@ -174,6 +174,25 @@ Operate exclusively through the root executable:
 ./github-catalog sync qobeat '*' --parallel 8
 ```
 
+### `refresh` — update inventory only (no collection)
+
+```
+./github-catalog refresh <owner|owner/repo> [--private|--public|--all]
+```
+
+| Argument / flag | Required | Default | Description |
+|---------------|----------|---------|-------------|
+| `<owner>` | yes | — | Refresh the full repo inventory for an owner/org. URL forms like `https://github.com/qobeat` accepted. |
+| `<owner>/<repo>` | — | — | Refresh a single repository entry instead of the whole owner. |
+| `--private` / `--public` / `--all` | no | `--all` | Visibility filter. |
+
+Fetches `data/<owner>/user-repositories.jsonl` from GitHub via `gh` **without** cataloging repo content (no clone, no semantic extraction). Repos that disappeared from GitHub within the selected visibility scope are tombstoned in inventory (`status: deleted`). Always requires authenticated `gh`. Use it to pick up newly created, renamed, or deleted repos before a `sync` — or to seed inventory for a single private repo without a wildcard fetch.
+
+```bash
+./github-catalog refresh qobeat                      # whole owner, all visibilities
+./github-catalog refresh qobeat/ados-proj --public   # single repo
+```
+
 ### `report` — generate Markdown from JSONL
 
 ```
@@ -256,3 +275,13 @@ jq '.' docs/github-catalog.schema.json
 ./github-catalog lint
 ./github-catalog test
 ```
+
+## **Architecture decision records**
+
+| ADR | Status | Scope |
+|-----|--------|-------|
+| [ADR-001](docs/ADR-001-github-catalog-rewrite.md) | Accepted | Pure Bash/jq/git engine, JSONL streams, sentry skip logic |
+| [ADR-002](docs/ADR-002.md) | Accepted | Unified CLI, dual-auth (`--git-host`), lifecycle tombstones, report UX/AX |
+| [ADR-003](docs/ADR-003.md) | Proposed | Further UX/AX improvements (config, machine-readable output, onboarding) |
+| [ADR-004](docs/ADR-004.md) | Proposed | Repository intelligence — deterministic archetype classification |
+| [ADR-005](docs/ADR-005.md) | Proposed | `github-catalog-mcp` — Model Context Protocol server |

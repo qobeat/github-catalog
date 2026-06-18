@@ -20,7 +20,7 @@ JSONL
   grep -q '## Repository Summary' "$out" || return 1
   grep -q 'Key Files' "$out" || return 1
   grep -q '## Detailed Semantics' "$out" || return 1
-  grep -q '**Goal:**' "$out" || return 1
+  grep -Fq '**Goal:**' "$out" || return 1
 
   rm -rf "$work"
 }
@@ -137,7 +137,7 @@ JSONL
 
   "$REPORTER" --owner testowner --data-dir "$work" --output "$out" >/dev/null
 
-  grep -q '**Flows:**' "$out" || return 1
+  grep -Fq '**Flows:**' "$out" || return 1
   grep -q 'Typical Workflows' "$out" || return 1
 
   rm -rf "$work"

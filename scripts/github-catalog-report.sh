@@ -166,7 +166,7 @@ jq -rn \
   )
 ' "$CATALOG_JSONL" > "$WRITE_TARGET"
 
-# --- Section C: commit activity (optional) ---
+# --- Sections C–E: commit activity, detailed semantics, collection errors ---
 {
   echo ""
   if [[ -f "$COMMITS_JSONL" ]] && [[ -s "$COMMITS_JSONL" ]]; then
@@ -202,10 +202,7 @@ jq -rn \
   else
     echo "_Commit history not available — run sync to populate \`git-projects-commits.jsonl\`._"
   fi
-} >> "$WRITE_TARGET"
 
-# --- Section D: detailed semantics ---
-{
   echo ""
   echo "## Detailed Semantics"
   echo ""
@@ -252,23 +249,22 @@ jq -rn \
       else "" end)
     end
   ' "$CATALOG_JSONL"
-} >> "$WRITE_TARGET"
 
-# --- Section E: collection errors (omit when empty) ---
-jq -rn '
-  def repo_status: .status // "active";
-  [inputs | select(.record_type == "repo_snapshot")]
-  | group_by(.repo_slug)
-  | map(sort_by(.generated_at) | last)
-  | map(select(.errors | length > 0 and repo_status != "deleted"))
-  | if length == 0 then empty
-    else
-      "\n## Collection Errors\n\n" +
-      "| Repository | Errors |\n" +
-      "|---|---|\n",
-      (.[] | "| \(.repo_slug) | \(.errors | join("; ")) |\n")
-    end
-' "$CATALOG_JSONL" >> "$WRITE_TARGET"
+  jq -rn '
+    def repo_status: .status // "active";
+    [inputs | select(.record_type == "repo_snapshot")]
+    | group_by(.repo_slug)
+    | map(sort_by(.generated_at) | last)
+    | map(select(.errors | length > 0 and repo_status != "deleted"))
+    | if length == 0 then empty
+      else
+        "\n## Collection Errors\n\n" +
+        "| Repository | Errors |\n" +
+        "|---|---|\n",
+        (.[] | "| \(.repo_slug) | \(.errors | join("; ")) |\n")
+      end
+  ' "$CATALOG_JSONL"
+} >> "$WRITE_TARGET"
 
 find_matching_report() {
   local report_dir="$1" fingerprint="$2" f fp

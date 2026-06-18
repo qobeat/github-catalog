@@ -73,9 +73,9 @@ run_tests() {
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 
-# 1. Run zero-cost syntax checks on scripts and tests
-echo "[bash -n] syntax checks"
-find "$REPO_ROOT/scripts" "$REPO_ROOT/tests" -type f -name '*.sh' -exec bash -n {} +
+# 1. Syntax and ShellCheck (same as ./github-catalog lint)
+echo "[lint] syntax and ShellCheck"
+"$SCRIPT_DIR/lint.sh"
 
 # 2. Discover and run unit tests
 mapfile -t files < <(find "$REPO_ROOT/tests" -type f -name 'test_*.sh' 2>/dev/null | sort)

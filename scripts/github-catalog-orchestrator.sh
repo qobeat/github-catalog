@@ -283,7 +283,7 @@ if needs_gh_inventory; then
           --report-id "$REPORT_ID" \
           --data-dir "$DATA_DIR" \
           --log-file "$LOG_FILE" \
-          --tombstone 2>>"$LOG_FILE" || true
+          --tombstone || true
       done < "$TOMBSTONES_FILE"
     fi
     rm -f "$TOMBSTONES_FILE"

@@ -1,6 +1,6 @@
 # ADR-001: github-catalog — Pure Bash/jq/git Rewrite
 
-**Status:** Depricated  
+**Status:** Accepted — foundational engine; the UX/AX layer is extended (not replaced) by [ADR-002](ADR-002.md)  
 **Date:** 2026-06-17  
 **Environment:** WSL2 · Linux 6.6.114.1-microsoft-standard-WSL2 · x86\_64 · Bash 5.0+ · jq 1.7  
 **Replaces:** Python + `gh`-CLI implementation in `github-catalog.zip`
